@@ -22,8 +22,13 @@ if ! command -v cargo &> /dev/null; then
 fi
 
 if [ -x "${HOME}/.cargo/bin/dust" ]; then
-    log_info "Dust is already installed (found ~/.cargo/bin/dust)."
-    exit 0
+    if [ -n "$MJSTP_UPDATE" ]; then
+        log_info "Updating Dust..."
+        cargo install du-dust --locked --force
+    else
+        log_info "Dust is already installed (found ~/.cargo/bin/dust)."
+        exit 0
+    fi
 fi
 
 log_info "Building Dust from source (via Cargo)..."

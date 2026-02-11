@@ -86,7 +86,24 @@ resolve_deps() {
 }
 
 # Resolve for all packages (or specific ones if args provided)
-TARGETS=("$@")
+# Parse arguments
+TARGETS=()
+export MJSTP_UPDATE=""
+
+while [[ $# -gt 0 ]]; do
+    key="$1"
+    case $key in
+        -u|--update)
+        export MJSTP_UPDATE="true"
+        shift # past argument
+        ;;
+        *)
+        TARGETS+=("$1")
+        shift # past argument
+        ;;
+    esac
+done
+
 if [[ ${#TARGETS[@]} -eq 0 ]]; then
     TARGETS=("${PACKAGES[@]}")
 fi

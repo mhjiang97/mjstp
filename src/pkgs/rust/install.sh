@@ -8,7 +8,12 @@ set -e
 log_info "Installing Rust..."
 
 if [ -d "$HOME/.cargo" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    log_warn "Rust is already installed (found ~/.cargo/bin/cargo)."
+    if [ -n "$MJSTP_UPDATE" ]; then
+        log_info "Updating Rust..."
+        rustup update
+    else
+        log_warn "Rust is already installed (found ~/.cargo/bin/cargo). Use --update to upgrade."
+    fi
 else
     # -y disables confirmation prompts
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y

@@ -22,7 +22,12 @@ if ! command -v cargo &> /dev/null; then
 fi
 
 if command -v starship &> /dev/null; then
-    log_info "Starship is already installed."
+    if [ -n "$MJSTP_UPDATE" ]; then
+        log_info "Updating Starship..."
+        cargo install starship --locked --force
+    else
+        log_info "Starship is already installed."
+    fi
 else
     cargo install starship --locked
     log_success "Starship installed."

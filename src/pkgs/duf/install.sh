@@ -8,8 +8,13 @@ set -e
 log_info "Installing Duf..."
 
 if [ -x "$HOME/local/bin/duf" ]; then
-    log_info "Duf is already installed at $HOME/local/bin/duf."
-    exit 0
+    if [ -n "$MJSTP_UPDATE" ]; then
+        log_info "Updating Duf..."
+        # fall through to build
+    else
+        log_info "Duf is already installed at $HOME/local/bin/duf."
+        exit 0
+    fi
 fi
 
 # Ensure Go is available
@@ -35,7 +40,7 @@ go build
 
 ensure_dir "$HOME/local/bin"
 mv duf "$HOME/local/bin/duf"
-log_success "Duf installed."
+log_success "Duf installed/updated."
 
 cd -
 rm -rf "${tmp_dir}"

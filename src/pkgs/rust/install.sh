@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-set -eou pipefail
+# Dependencies:
+set -e
 
+# shellcheck disable=SC1091
+[ -n "${LIB_DIR}" ] && source "${LIB_DIR}/utils.sh"
 
-tmp_dir=$(mktemp -d)
-cd "${tmp_dir}" || exit 1
+log_info "Installing Rust..."
 
-curl -o installer.sh -L https://sh.rustup.rs
-bash installer.sh
-
-cd -
-
-rm -rf "${tmp_dir}"
+if [ -d "$HOME/.cargo" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
+    log_warn "Rust is already installed (found ~/.cargo/bin/cargo)."
+else
+    # -y disables confirmation prompts
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    log_success "Rust installed."
+fi

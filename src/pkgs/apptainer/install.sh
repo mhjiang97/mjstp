@@ -5,18 +5,18 @@ set -e
 # shellcheck disable=SC1091
 [ -n "${LIB_DIR}" ] && source "${LIB_DIR}/utils.sh"
 
-log_info "Installing R Base..."
+log_info "Installing Apptainer via Condax..."
 
 export PATH="${HOME}/.local/bin:${PATH}"
 
-if [ -x "${HOME}/.local/bin/R" ]; then
-    log_info "R Base is already installed (found ~/.local/bin/R)."
+if [ -x "${HOME}/.local/bin/apptainer" ]; then
+    log_info "Apptainer is already installed (found ~/.local/bin/apptainer)."
     exit 0
 fi
 
 if command -v condax &> /dev/null; then
-    condax install -c conda-forge r-base
-    log_success "R Base installed."
+    condax install apptainer
+    log_success "Apptainer installed."
 else
     log_error "Condax not found."
     exit 1

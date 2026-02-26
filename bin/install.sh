@@ -147,6 +147,13 @@ if [[ ! -f "$PROFILE_FILE" ]]; then
     fi
 fi
 
+# Ensure basic paths are in profile
+if ! grep -q "local/bin" "${PROFILE_FILE}"; then
+    # shellcheck disable=SC2016
+    echo 'export PATH="$HOME/local/bin:$HOME/local/opt/bin:$PATH"' >> "${PROFILE_FILE}"
+    log_info "Added local bin to profile PATH."
+fi
+
 # Export variables for child scripts
 export MJSTP_ROOT="${ROOT_DIR}"
 export MJSTP_PROFILE="${PROFILE_FILE}"

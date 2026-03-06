@@ -43,6 +43,6 @@ bin/install.sh neovim starship
 - **Environment Managers**: `micromamba`, `pipx`, `condax`
 - **Languages**: `go`, `rust`, `r`
 - **Editors**: `neovim`, `lazyvim`
-- **Shell Tools**: `tmux`, `starship`, `duf`, `dust`
-- **Bioinformatics**: `snakemake`, `apptainer`
+- **Shell Tools**: `tmux`, `starship`, `duf`, `dust`, `apptainer`
+- **Bioinformatics**: `snakemake`
 - **R Tools**: `radian`

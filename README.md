@@ -40,6 +40,6 @@ bin/install.sh neovim starship
 
 ## Packages
 
-- **Core**: `micromamba`, `condax`
+- **Core**: `micromamba`, `pipx`, `condax`
 - **Languages**: `go`, `rust`, `r`
 - **Tools**: `neovim`, `tmux`, `duf`, `starship`, `apptainer`, `radian`, `dust`

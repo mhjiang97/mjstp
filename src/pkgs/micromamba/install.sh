@@ -10,7 +10,7 @@ ensure_dir "${HOME}/local/bin"
 ensure_dir "${HOME}/local/opt"
 
 # Check if micromamba binary exists (standard install location or our custom one if we had one)
-if [ -x "${HOME}/.local/bin/micromamba" ] || [ -d "${HOME}/local/opt/micromamba" ]; then
+if [ -x "${HOME}/local/bin/micromamba" ] || [ -d "${HOME}/local/opt/micromamba" ]; then
     log_info "Micromamba appears to be installed."
     exit 0
 fi
@@ -25,7 +25,8 @@ cd "${tmp_dir}" || exit 1
 # CONDA_FORGE_YES=yes adds conda-forge
 export INIT_YES=yes
 export CONDA_FORGE_YES=yes
-export PREFIX="${HOME}/local/opt/micromamba"
+export PREFIX_LOCATION="${HOME}/local/opt/micromamba"
+export BIN_FOLDER="${HOME}/local/bin"
 
 curl -Ls https://micro.mamba.pm/install.sh | bash
 

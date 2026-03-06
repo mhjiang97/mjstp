@@ -7,10 +7,8 @@ set -e
 
 log_info "Installing Condax..."
 
-# Check if condax is installed via micromamba (which usually links to ~/.local/bin)
-# But strictly, it's inside micromamba's base env.
-if [ -x "${HOME}/.local/bin/condax" ]; then
-    log_info "Condax is already installed (found ~/.local/bin/condax)."
+if [ -x "${HOME}/local/opt/micromamba/bin/condax" ]; then
+    log_info "Condax is already installed."
     exit 0
 fi
 
@@ -26,6 +24,7 @@ fi
 
 if command -v micromamba &> /dev/null; then
     micromamba install -y -n base -c conda-forge condax
+    ln -sf "${HOME}/local/opt/micromamba/bin/condax" "${HOME}/local/bin/condax"
     log_success "Condax installed."
 else
     log_error "Could not find micromamba executable. Check previous install steps."

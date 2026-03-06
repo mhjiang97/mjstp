@@ -7,7 +7,7 @@ set -e
 
 log_info "Installing Pipx..."
 
-export PATH="${HOME}/.local/bin:${PATH}"
+export PATH="${HOME}/.local/bin:${HOME}/local/bin:${PATH}"
 
 if [ -x "${HOME}/.local/bin/pipx" ]; then
     log_info "Pipx is already installed (found ~/.local/bin/pipx)."

@@ -154,11 +154,25 @@ if ! grep -q "local/bin" "${PROFILE_FILE}"; then
     log_info "Added local bin to profile PATH."
 fi
 
+if ! grep -q "CFLAGS" "${PROFILE_FILE}"; then
+    # shellcheck disable=SC2016
+    echo 'export CFLAGS="-I${HOME}/local/include"' >> "${PROFILE_FILE}"
+    log_info "Added CFLAGS to profile."
+fi
+
+if ! grep -q "LDFLAGS" "${PROFILE_FILE}"; then
+    # shellcheck disable=SC2016
+    echo 'export LDFLAGS="-L${HOME}/local/lib64 -L${HOME}/local/lib"' >> "${PROFILE_FILE}"
+    log_info "Added LDFLAGS to profile."
+fi
+
 # Export variables for child scripts
 export MJSTP_ROOT="${ROOT_DIR}"
 export MJSTP_PROFILE="${PROFILE_FILE}"
 export LIB_DIR="${LIB_DIR}"
 export PATH="${HOME}/local/bin:${HOME}/local/opt/bin:${PATH}" # Ensure path is set for execution
+export CFLAGS="-I${HOME}/local/include"
+export LDFLAGS="-L${HOME}/local/lib64 -L${HOME}/local/lib"
 
 for pkg in "${ORDERED_PKGS[@]}"; do
     log_info "Installing ${pkg}..."

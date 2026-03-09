@@ -8,10 +8,10 @@ set -e
 log_info "Installing Tmux via Condax..."
 
 # Ensure condax is in path, usually in ~/.local/bin or via conda
-export PATH="${HOME}/.local/bin:${PATH}"
+export PATH="${HOME}/local/bin:${HOME}/local/opt/micromamba/bin:${PATH}"
 
-if [ -x "${HOME}/.local/bin/tmux" ]; then
-    log_info "Tmux is already installed (found ~/.local/bin/tmux)."
+if [ -x "${HOME}/local/opt/micromamba/bin/tmux" ]; then
+    log_info "Tmux is already installed."
     exit 0
 fi
 

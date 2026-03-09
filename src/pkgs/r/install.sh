@@ -7,10 +7,10 @@ set -e
 
 log_info "Installing R Base..."
 
-export PATH="${HOME}/.local/bin:${PATH}"
+export PATH="${HOME}/local/bin:${HOME}/local/opt/micromamba/bin:${PATH}"
 
-if [ -x "${HOME}/.local/bin/R" ]; then
-    log_info "R Base is already installed (found ~/.local/bin/R)."
+if [ -x "${HOME}/local/opt/micromamba/bin/R" ]; then
+    log_info "R Base is already installed."
     exit 0
 fi
 

@@ -13,14 +13,8 @@ if [ -x "${HOME}/local/opt/micromamba/bin/condax" ]; then
 fi
 
 # Load micromamba shell hook
+export PATH="${HOME}/local/bin:${HOME}/local/opt/micromamba/bin:${PATH}"
 eval "$("${HOME}/local/bin/micromamba" shell hook -s bash)" 2>/dev/null || true
-# Try path
-if ! command -v micromamba &> /dev/null; then
-    log_error "Micromamba not found in path."
-    # Try common location or source bashrc
-    # shellcheck disable=SC1091
-    if [ -f "${HOME}/.bashrc" ]; then source "${HOME}/.bashrc"; fi
-fi
 
 if command -v micromamba &> /dev/null; then
     micromamba install -y -n base -c conda-forge condax

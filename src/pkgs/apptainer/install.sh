@@ -7,10 +7,10 @@ set -e
 
 log_info "Installing Apptainer via Condax..."
 
-export PATH="${HOME}/.local/bin:${PATH}"
+export PATH="${HOME}/local/bin:${HOME}/local/opt/micromamba/bin:${PATH}"
 
-if [ -x "${HOME}/.local/bin/apptainer" ]; then
-    log_info "Apptainer is already installed (found ~/.local/bin/apptainer)."
+if [ -x "${HOME}/local/opt/micromamba/bin/apptainer" ]; then
+    log_info "Apptainer is already installed."
     exit 0
 fi
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Dependencies: neovim
+# Dependencies: neovim, git
 set -e
 
 # shellcheck disable=SC1091

@@ -7,8 +7,8 @@ set -e
 
 log_info "Installing Neovim..."
 
-if [ -d "$HOME/local/opt/nvim-linux-x86_64" ] && [ -x "$HOME/local/opt/nvim-linux-x86_64/bin/nvim" ]; then
-    log_info "Neovim is already installed at $HOME/local/opt/nvim-linux-x86_64."
+if [ -x "$HOME/local/bin/nvim" ]; then
+    log_info "Neovim is already installed at $HOME/local/bin/nvim."
     exit 0
 fi
 
@@ -18,12 +18,10 @@ cd "${tmp_dir}" || exit 1
 log_info "Downloading Neovim..."
 curl -LO https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz
 
-ensure_dir "${HOME}/local/opt"
-rm -rf "${HOME}/local/opt/nvim-linux-x86_64"
+ensure_dir "${HOME}/local"
 
-if tar -C "${HOME}/local/opt" -xzf nvim-linux-x86_64.tar.gz; then
-    ensure_dir "${HOME}/local/bin"
-    ln -sf "${HOME}/local/opt/nvim-linux-x86_64/bin/nvim" "${HOME}/local/bin/nvim"
+if tar -xzf nvim-linux-x86_64.tar.gz; then
+    cp -r nvim-linux-x86_64/bin nvim-linux-x86_64/lib nvim-linux-x86_64/share "${HOME}/local/"
     log_success "Neovim installed."
 else
     log_error "Failed to extract Neovim."

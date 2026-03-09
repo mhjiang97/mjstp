@@ -12,6 +12,8 @@ fi
 
 log_info "Installing Git..."
 
+export PATH="${HOME}/local/bin:${HOME}/local/opt/micromamba/bin:${PATH}"
+
 condax install -c conda-forge git
 
 log_success "Git installed."

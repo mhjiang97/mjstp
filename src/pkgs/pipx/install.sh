@@ -7,7 +7,6 @@ set -e
 
 log_info "Installing Pipx..."
 
-# condax symlinks are in ~/local/bin; condax-managed bins go to ~/.local/bin
 export PATH="${HOME}/local/bin:${HOME}/local/opt/micromamba/bin:${HOME}/.local/bin:${PATH}"
 
 if [ -x "${HOME}/.local/bin/pipx" ]; then

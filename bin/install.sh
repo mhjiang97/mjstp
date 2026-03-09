@@ -170,7 +170,8 @@ fi
 export MJSTP_ROOT="${ROOT_DIR}"
 export MJSTP_PROFILE="${PROFILE_FILE}"
 export LIB_DIR="${LIB_DIR}"
-export PATH="${HOME}/local/bin:${HOME}/local/opt/bin:${PATH}" # Ensure path is set for execution
+export PATH="${HOME}/local/bin:${HOME}/local/opt/micromamba/bin:${HOME}/local/opt/bin:${PATH}"
+export MAMBA_ROOT_PREFIX="${HOME}/local/opt/micromamba"
 export CFLAGS="-I${HOME}/local/include"
 export LDFLAGS="-L${HOME}/local/lib64 -L${HOME}/local/lib"
 

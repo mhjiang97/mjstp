@@ -22,10 +22,29 @@ This project automates the setup of development tools on new Linux servers (x86_
 make install
 ```
 
-### Install Specific Package
+### Install Specific Packages
 
 ```bash
 bin/install.sh neovim starship
+```
+
+### Exclude Packages
+
+```bash
+# Single package
+make install EXCLUDE=apptainer
+
+# Multiple packages
+make install EXCLUDE="apptainer rust"
+
+# Via bin/install.sh directly
+bin/install.sh --exclude apptainer --exclude rust
+```
+
+### Update Installed Packages
+
+```bash
+make update
 ```
 
 ## Adding a New Package

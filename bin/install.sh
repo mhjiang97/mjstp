@@ -88,6 +88,7 @@ resolve_deps() {
 # Resolve for all packages (or specific ones if args provided)
 # Parse arguments
 TARGETS=()
+EXCLUDES=()
 export MJSTP_UPDATE=""
 
 while [[ $# -gt 0 ]]; do
@@ -95,17 +96,40 @@ while [[ $# -gt 0 ]]; do
     case $key in
         -u|--update)
         export MJSTP_UPDATE="true"
-        shift # past argument
+        shift
+        ;;
+        -e|--exclude)
+        EXCLUDES+=("$2")
+        shift; shift
         ;;
         *)
         TARGETS+=("$1")
-        shift # past argument
+        shift
         ;;
     esac
 done
 
 if [[ ${#TARGETS[@]} -eq 0 ]]; then
     TARGETS=("${PACKAGES[@]}")
+fi
+
+# Filter out excluded packages
+if [[ ${#EXCLUDES[@]} -gt 0 ]]; then
+    FILTERED=()
+    for pkg in "${TARGETS[@]}"; do
+        excluded=0
+        for ex in "${EXCLUDES[@]}"; do
+            if [[ "$pkg" == "$ex" ]]; then
+                excluded=1
+                break
+            fi
+        done
+        if [[ "$excluded" == "0" ]]; then
+            FILTERED+=("$pkg")
+        fi
+    done
+    TARGETS=("${FILTERED[@]}")
+    log_info "Excluding: ${EXCLUDES[*]}"
 fi
 
 log_info "Resolving dependencies..."

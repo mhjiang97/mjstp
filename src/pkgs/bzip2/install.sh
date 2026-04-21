@@ -23,8 +23,9 @@ tmp_dir=$(mktemp -d)
 cd "${tmp_dir}" || exit 1
 
 log_info "Cloning bzip2 ${VERSION}..."
-git clone --depth 1 --branch bzip2-${VERSION} https://gitlab.com/bzip2/bzip2.git
-cd bzip2
+git clone https://gitlab.com/bzip2/bzip2.git
+cd bzip2 || exit 1
+git checkout bzip2-${VERSION}
 
 log_info "Building with CMake..."
 mkdir build && cd build

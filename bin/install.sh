@@ -174,8 +174,15 @@ fi
 # Ensure basic paths are in profile
 if ! grep -q "local/bin" "${PROFILE_FILE}"; then
     # shellcheck disable=SC2016
-    echo 'export PATH="$HOME/local/bin:$HOME/local/opt/bin:$PATH"' >> "${PROFILE_FILE}"
+    echo 'export PATH="${HOME}/local/bin:$PATH"' >> "${PROFILE_FILE}"
     log_info "Added local bin to profile PATH."
+fi
+
+# Ensure ~/.local/bin is in PATH
+if ! grep -q "/.local/bin" "${PROFILE_FILE}"; then
+    # shellcheck disable=SC2016
+    echo 'export PATH="${HOME}/.local/bin:$PATH"' >> "${PROFILE_FILE}"
+    log_info "Added .local bin to profile PATH."
 fi
 
 if ! grep -q "CFLAGS" "${PROFILE_FILE}"; then
@@ -194,7 +201,7 @@ fi
 export MJSTP_ROOT="${ROOT_DIR}"
 export MJSTP_PROFILE="${PROFILE_FILE}"
 export LIB_DIR="${LIB_DIR}"
-export PATH="${HOME}/local/bin:${HOME}/local/opt/micromamba/bin:${HOME}/local/opt/bin:${PATH}"
+export PATH="${HOME}/local/bin:${HOME}/local/opt/micromamba/bin:${PATH}"
 export MAMBA_ROOT_PREFIX="${HOME}/local/opt/micromamba"
 export CFLAGS="-I${HOME}/local/include"
 export LDFLAGS="-L${HOME}/local/lib64 -L${HOME}/local/lib"
@@ -203,7 +210,6 @@ for pkg in "${ORDERED_PKGS[@]}"; do
     log_info "Installing ${pkg}..."
 
     install_script="${SRC_DIR}/${pkg}/install.sh"
-    chmod +x "${install_script}"
 
     if "${install_script}"; then
         log_success "${pkg} installed successfully."

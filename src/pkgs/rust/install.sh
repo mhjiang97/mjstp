@@ -19,3 +19,12 @@ else
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
     log_success "Rust installed."
 fi
+
+if [ -n "${MJSTP_PROFILE}" ]; then
+    # shellcheck disable=SC2016
+    if ! line_in_file 'export PATH="$HOME/.cargo/bin:$PATH"' "${MJSTP_PROFILE}"; then
+        # shellcheck disable=SC2016
+        echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "${MJSTP_PROFILE}"
+        log_info "Added ~/.cargo/bin to PATH in profile."
+    fi
+fi

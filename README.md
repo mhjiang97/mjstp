@@ -25,7 +25,11 @@ make install
 ### Install Specific Packages
 
 ```bash
+# Via argument
 bin/install.sh neovim starship
+
+# Via make
+make install INCLUDE="neovim starship"
 ```
 
 ### Exclude Packages

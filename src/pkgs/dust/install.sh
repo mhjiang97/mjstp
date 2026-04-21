@@ -27,8 +27,8 @@ if [ -x "${HOME}/.cargo/bin/dust" ]; then
         cargo install du-dust --locked --force
     else
         log_info "Dust is already installed (found ~/.cargo/bin/dust)."
-        exit 0
     fi
+    exit 0
 fi
 
 log_info "Building Dust from source (via Cargo)..."

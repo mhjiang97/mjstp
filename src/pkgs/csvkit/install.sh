@@ -3,7 +3,7 @@
 set -e
 
 # shellcheck disable=SC1091
-[ -n "$LIB_DIR" ] && source "${LIB_DIR}/utils.sh"
+[ -n "${LIB_DIR}" ] && source "${LIB_DIR}/utils.sh"
 
 log_info "Installing csvkit..."
 

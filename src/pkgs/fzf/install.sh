@@ -6,7 +6,13 @@ set -e
 [ -n "${LIB_DIR}" ] && source "${LIB_DIR}/utils.sh"
 
 if [ -x "${HOME}/.fzf/bin/fzf" ]; then
-    log_info "fzf is already installed."
+    if [ -n "${MJSTP_UPDATE}" ]; then
+        log_info "Updating fzf..."
+        cd "${HOME}/.fzf" && git pull && ./install --all --no-update-rc
+        log_success "fzf updated."
+    else
+        log_info "fzf is already installed."
+    fi
     exit 0
 fi
 

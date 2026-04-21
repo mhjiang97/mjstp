@@ -7,12 +7,17 @@ set -e
 
 log_info "Installing Radian..."
 
-export PATH="${HOME}/.local/bin:${PATH}"
+export PATH="${HOME}/local/bin:${HOME}/local/opt/micromamba/bin:${HOME}/.local/bin:${PATH}"
 
-# Radian is installed via pipx, so it should be in ~/.custom path or linked to ~/.local/bin
-if [ -x "${HOME}/.local/bin/radian" ]; then
-    log_info "Radian is already installed (found ~/.local/bin/radian)."
-    exit 0
+if [ -x "${HOME}/.local/bin/radian" ] || command -v radian &>/dev/null; then
+    if [ -n "${MJSTP_UPDATE}" ]; then
+        log_info "Updating Radian..."
+        pipx upgrade radian || true
+        exit 0
+    else
+        log_info "Radian is already installed."
+        exit 0
+    fi
 fi
 
 if command -v pipx &> /dev/null; then

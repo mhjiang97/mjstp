@@ -11,10 +11,52 @@ LIB_DIR="${ROOT_DIR}/lib"
 # shellcheck disable=SC1091
 source "${LIB_DIR}/utils.sh"
 
-# Check system compat
-if ! check_system; then
-    log_error "System check failed. Aborting."
-    exit 1
+# Parse arguments early (before system check so --dry-run can skip it)
+TARGETS=()
+EXCLUDES=()
+export MJSTP_UPDATE=""
+DRY_RUN=""
+LOG_FILE=""
+
+while [[ $# -gt 0 ]]; do
+    key="$1"
+    case $key in
+        -u|--update)
+        export MJSTP_UPDATE="true"
+        shift
+        ;;
+        -e|--exclude)
+        EXCLUDES+=("$2")
+        shift; shift
+        ;;
+        -n|--dry-run)
+        DRY_RUN="true"
+        shift
+        ;;
+        -l|--log)
+        LOG_FILE="${HOME}/.mjstp_install.log"
+        shift
+        ;;
+        *)
+        TARGETS+=("$1")
+        shift
+        ;;
+    esac
+done
+
+# Check system compat (skip in dry-run mode)
+if [[ -z "${DRY_RUN}" ]]; then
+    if ! check_system; then
+        log_error "System check failed. Aborting."
+        exit 1
+    fi
+fi
+
+# Set up logging to file if requested
+if [[ -n "${LOG_FILE}" ]]; then
+    log_info "Logging output to ${LOG_FILE}"
+    exec > >(tee -a "${LOG_FILE}") 2>&1
+    echo "--- MJSTP install started at $(date) ---" >> "${LOG_FILE}"
 fi
 
 # Map to store dependencies
@@ -85,30 +127,6 @@ resolve_deps() {
     ORDERED_PKGS+=("${pkg}")
 }
 
-# Resolve for all packages (or specific ones if args provided)
-# Parse arguments
-TARGETS=()
-EXCLUDES=()
-export MJSTP_UPDATE=""
-
-while [[ $# -gt 0 ]]; do
-    key="$1"
-    case $key in
-        -u|--update)
-        export MJSTP_UPDATE="true"
-        shift
-        ;;
-        -e|--exclude)
-        EXCLUDES+=("$2")
-        shift; shift
-        ;;
-        *)
-        TARGETS+=("$1")
-        shift
-        ;;
-    esac
-done
-
 if [[ ${#TARGETS[@]} -eq 0 ]]; then
     TARGETS=("${PACKAGES[@]}")
 fi
@@ -154,22 +172,38 @@ done
 # Execute Installs
 log_info "Installation order: ${ORDERED_PKGS[*]}"
 
+# Dry-run mode: just print the order and exit
+if [[ -n "${DRY_RUN}" ]]; then
+    log_info "Dry-run mode — no packages will be installed."
+    echo ""
+    echo "Resolved install order (${#ORDERED_PKGS[@]} packages):"
+    for i in "${!ORDERED_PKGS[@]}"; do
+        pkg="${ORDERED_PKGS[$i]}"
+        deps="${DEPS[${pkg}]:-none}"
+        printf "  %2d. %-15s (deps: %s)\n" "$((i+1))" "$pkg" "$deps"
+    done
+    exit 0
+fi
+
 # Create a common profile file if it doesn't exist
 PROFILE_FILE="$HOME/.mjstp_profile"
 # Use utils helpers correctly
 if [[ ! -f "$PROFILE_FILE" ]]; then
     touch "$PROFILE_FILE"
     log_info "Created profile file at ${PROFILE_FILE}"
+fi
 
-    if ! line_in_file "source \"${PROFILE_FILE}\"" "$HOME/.bashrc"; then
+# Source profile from .bashrc and .zshrc
+for rc_file in "$HOME/.bashrc" "$HOME/.zshrc"; do
+    if [[ -f "$rc_file" ]] && ! line_in_file "source \"${PROFILE_FILE}\"" "$rc_file"; then
         {
             echo ""
             echo "# MJSTP Profile"
             echo "if [ -f \"${PROFILE_FILE}\" ]; then source \"${PROFILE_FILE}\"; fi"
-        } >> "$HOME/.bashrc"
-        log_success "Added sourcing of ${PROFILE_FILE} to .bashrc"
+        } >> "$rc_file"
+        log_success "Added sourcing of ${PROFILE_FILE} to $(basename "$rc_file")"
     fi
-fi
+done
 
 # Ensure basic paths are in profile
 if ! grep -q "local/bin" "${PROFILE_FILE}"; then

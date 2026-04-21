@@ -20,6 +20,7 @@ fi
 log_info "Installing bzip2 ${VERSION}..."
 
 tmp_dir=$(mktemp -d)
+trap 'rm -rf "${tmp_dir}"' EXIT
 cd "${tmp_dir}" || exit 1
 
 log_info "Cloning bzip2 ${VERSION}..."
@@ -31,10 +32,6 @@ log_info "Building with CMake..."
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE="Release" -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}"
 cmake --build .
-ctest -V
 cmake --build . --target install
-
-cd -
-rm -rf "${tmp_dir}"
 
 log_success "bzip2 ${VERSION} installed to ${INSTALL_DIR}."

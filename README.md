@@ -51,6 +51,24 @@ bin/install.sh --exclude apptainer --exclude rust
 make update
 ```
 
+### Dry Run (preview install order)
+
+```bash
+make dry-run
+
+# Or directly
+bin/install.sh --dry-run
+bin/install.sh --dry-run neovim starship
+```
+
+### Log Output to File
+
+```bash
+bin/install.sh --log
+```
+
+Output is logged to `~/.mjstp_install.log`.
+
 ## Adding a New Package
 
 1. Create a directory in `src/pkgs/<package_name>/`.

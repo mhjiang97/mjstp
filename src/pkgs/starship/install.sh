@@ -27,6 +27,7 @@ if command -v starship &> /dev/null; then
         cargo install starship --locked --force
     else
         log_info "Starship is already installed."
+        exit 0
     fi
 else
     cargo install starship --locked

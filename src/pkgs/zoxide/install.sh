@@ -6,13 +6,22 @@ set -e
 [ -n "${LIB_DIR}" ] && source "${LIB_DIR}/utils.sh"
 
 if command -v zoxide &>/dev/null; then
-    log_info "zoxide is already installed."
-    exit 0
+    if [ -n "${MJSTP_UPDATE}" ]; then
+        log_info "Updating zoxide..."
+        # Re-run installer to get latest version
+    else
+        log_info "zoxide is already installed."
+        exit 0
+    fi
 fi
 
 log_info "Installing zoxide..."
 
-curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh
+# Download installer to temp file instead of piping to shell
+tmp_dir=$(mktemp -d)
+trap 'rm -rf "${tmp_dir}"' EXIT
+download "https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh" "${tmp_dir}/install.sh"
+bash "${tmp_dir}/install.sh"
 
 if [ -n "${MJSTP_PROFILE}" ]; then
     # shellcheck disable=SC2016

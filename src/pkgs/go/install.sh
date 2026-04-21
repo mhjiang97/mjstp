@@ -5,38 +5,42 @@ set -e
 # shellcheck disable=SC1091
 [ -n "${LIB_DIR}" ] && source "${LIB_DIR}/utils.sh"
 
-log_info "Installing Go..."
-
-VERSION="1.22.0"
+VERSION="1.24.2"
 OS="linux"
 ARCH="amd64"
+TARBALL="go${VERSION}.${OS}-${ARCH}.tar.gz"
 
-# Check execution path first
 if [ -d "$HOME/local/opt/go" ] && [ -x "$HOME/local/opt/go/bin/go" ]; then
-    log_info "Go is already installed at $HOME/local/opt/go."
-    exit 0
+    if [ -n "${MJSTP_UPDATE}" ]; then
+        log_info "Updating Go to ${VERSION}..."
+        rm -rf "${HOME}/local/opt/go"
+    else
+        log_info "Go is already installed at $HOME/local/opt/go."
+        exit 0
+    fi
 fi
 
+log_info "Installing Go ${VERSION}..."
+
 tmp_dir=$(mktemp -d)
+trap 'rm -rf "${tmp_dir}"' EXIT
 cd "${tmp_dir}" || exit 1
 
 log_info "Downloading Go ${VERSION}..."
-curl -LO "https://go.dev/dl/go${VERSION}.${OS}-${ARCH}.tar.gz"
+download "https://go.dev/dl/${TARBALL}"
 
 ensure_dir "${HOME}/local/opt"
 rm -rf "${HOME}/local/opt/go"
 ensure_dir "${HOME}/local/bin"
 
-if tar -C "${HOME}/local/opt" -xzf "go${VERSION}.${OS}-${ARCH}.tar.gz"; then
+if tar -C "${HOME}/local/opt" -xzf "${TARBALL}"; then
     ln -sf "${HOME}/local/opt/go/bin/go" "${HOME}/local/bin/go"
     ln -sf "${HOME}/local/opt/go/bin/gofmt" "${HOME}/local/bin/gofmt"
-    log_success "Go installed."
+    log_success "Go ${VERSION} installed."
 else
     log_error "Failed to extract Go."
     exit 1
 fi
-
-rm -rf "${tmp_dir}"
 
 if [ -n "${MJSTP_PROFILE}" ]; then
     if ! line_in_file "export PATH=\$HOME/local/opt/go/bin:\$PATH" "${MJSTP_PROFILE}"; then

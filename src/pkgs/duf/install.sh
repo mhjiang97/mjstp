@@ -3,7 +3,7 @@
 set -e
 
 # shellcheck disable=SC1091
-[ -n "$LIB_DIR" ] && source "${LIB_DIR}/utils.sh"
+[ -n "${LIB_DIR}" ] && source "${LIB_DIR}/utils.sh"
 
 log_info "Installing Duf..."
 
@@ -31,16 +31,14 @@ if ! command -v go &> /dev/null; then
 fi
 
 tmp_dir=$(mktemp -d)
+trap 'rm -rf "${tmp_dir}"' EXIT
 cd "${tmp_dir}" || exit 1
 
 log_info "Cloning and building Duf..."
 git clone https://github.com/muesli/duf.git
-cd duf
+cd duf || exit 1
 go build
 
 ensure_dir "$HOME/local/bin"
 mv duf "$HOME/local/bin/duf"
 log_success "Duf installed/updated."
-
-cd -
-rm -rf "${tmp_dir}"

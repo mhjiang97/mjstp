@@ -10,13 +10,16 @@ log_info "Installing Rust..."
 if [ -d "$HOME/.cargo" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
     if [ -n "$MJSTP_UPDATE" ]; then
         log_info "Updating Rust..."
-        rustup update
+        "$HOME/.cargo/bin/rustup" update
     else
         log_warn "Rust is already installed (found ~/.cargo/bin/cargo). Use --update to upgrade."
     fi
 else
-    # -y disables confirmation prompts
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    # Download installer to temp file instead of piping to shell
+    tmp_dir=$(mktemp -d)
+    trap 'rm -rf "${tmp_dir}"' EXIT
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o "${tmp_dir}/rustup-init.sh"
+    bash "${tmp_dir}/rustup-init.sh" -y
     log_success "Rust installed."
 fi
 

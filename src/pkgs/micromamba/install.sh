@@ -18,6 +18,7 @@ fi
 log_info "Installing Micromamba..."
 
 tmp_dir=$(mktemp -d)
+trap 'rm -rf "${tmp_dir}"' EXIT
 cd "${tmp_dir}" || exit 1
 
 # Run installer non-interactively
@@ -28,9 +29,8 @@ export CONDA_FORGE_YES=yes
 export PREFIX_LOCATION="${HOME}/local/opt/micromamba"
 export BIN_FOLDER="${HOME}/local/bin"
 
-curl -Ls https://micro.mamba.pm/install.sh | bash
-
-cd -
-rm -rf "${tmp_dir}"
+# Download installer to temp file instead of piping to shell
+download "https://micro.mamba.pm/install.sh" "${tmp_dir}/install.sh"
+bash "${tmp_dir}/install.sh"
 
 log_success "Micromamba installed."

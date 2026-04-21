@@ -24,10 +24,11 @@ TARBALL="htslib-${VERSION}.tar.bz2"
 URL="https://github.com/samtools/htslib/releases/download/${VERSION}/${TARBALL}"
 
 tmp_dir=$(mktemp -d)
+trap 'rm -rf "${tmp_dir}"' EXIT
 cd "${tmp_dir}" || exit 1
 
 log_info "Downloading ${URL}..."
-curl -LO "${URL}"
+download "${URL}"
 
 log_info "Extracting..."
 tar xjf "${TARBALL}"
@@ -37,8 +38,6 @@ log_info "Configuring and building..."
 ./configure --prefix="${INSTALL_DIR}"
 make -j"$(nproc 2>/dev/null || echo 1)"
 make install
-
-rm -rf "${tmp_dir}"
 
 log_success "htslib ${VERSION} installed to ${INSTALL_DIR}."
 

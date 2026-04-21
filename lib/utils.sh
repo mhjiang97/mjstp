@@ -42,15 +42,28 @@ check_system() {
     fi
 }
 
-# Idempotency helper
+# Idempotency helper — checks if a string appears anywhere in a file
 # Usage: line_in_file "export PATH=..." ~/.bashrc || echo "..." >> ~/.bashrc
 line_in_file() {
-    grep -qFx "$1" "$2" 2>/dev/null
+    grep -qF "$1" "$2" 2>/dev/null
 }
 
 ensure_dir() {
     if [[ ! -d "$1" ]]; then
         mkdir -p "$1"
         log_info "Created directory: $1"
+    fi
+}
+
+# Download helper — wraps curl with -f (fail on HTTP errors) and retries
+# Usage: download "https://example.com/file.tar.gz" [output_file]
+download() {
+    local url="$1"
+    local output="$2"
+
+    if [[ -n "$output" ]]; then
+        curl -fSL --retry 3 --retry-delay 2 -o "$output" "$url"
+    else
+        curl -fSLO --retry 3 --retry-delay 2 "$url"
     fi
 }

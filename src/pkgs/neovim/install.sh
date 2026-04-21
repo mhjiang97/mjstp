@@ -5,18 +5,24 @@ set -e
 # shellcheck disable=SC1091
 [ -n "${LIB_DIR}" ] && source "${LIB_DIR}/utils.sh"
 
-log_info "Installing Neovim..."
-
 if [ -x "$HOME/local/bin/nvim" ]; then
-    log_info "Neovim is already installed at $HOME/local/bin/nvim."
-    exit 0
+    if [ -n "${MJSTP_UPDATE}" ]; then
+        log_info "Updating Neovim..."
+        rm -f "$HOME/local/bin/nvim"
+    else
+        log_info "Neovim is already installed at $HOME/local/bin/nvim."
+        exit 0
+    fi
 fi
 
+log_info "Installing Neovim..."
+
 tmp_dir=$(mktemp -d)
+trap 'rm -rf "${tmp_dir}"' EXIT
 cd "${tmp_dir}" || exit 1
 
 log_info "Downloading Neovim..."
-curl -LO https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz
+download https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz
 
 ensure_dir "${HOME}/local"
 
@@ -27,6 +33,3 @@ else
     log_error "Failed to extract Neovim."
     exit 1
 fi
-
-cd -
-rm -rf "${tmp_dir}"

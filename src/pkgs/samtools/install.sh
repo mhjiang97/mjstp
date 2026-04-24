@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Dependencies: htslib
+# Dependencies: htslib, ncurses
 set -e
 
 # shellcheck disable=SC1091

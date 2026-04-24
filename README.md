@@ -85,5 +85,6 @@ Output is logged to `~/.mjstp_install.log`.
 - **Languages**: `go`, `rust`, `r`
 - **Editors**: `neovim`, `lazyvim`
 - **Shell Tools**: `tmux`, `starship`, `duf`, `dust`, `apptainer`, `git`, `lsd`, `bzip2`, `zoxide`, `fzf`
+- **Libraries**: `ncurses`
 - **Bioinformatics**: `snakemake`, `htslib`, `samtools`, `bcftools`
 - **R Tools**: `radian`

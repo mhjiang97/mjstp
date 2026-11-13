@@ -24,12 +24,55 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1" >&2
 }
 
+# True when an install script opts out of the default Linux x86_64 requirement.
+# Opt out with a header the package enforces itself, for example:
+#   # Platforms: darwin
+# Missing header, or an explicit linux-x86_64 tag, keeps the default requirement.
+_pkg_requires_linux_x86_64() {
+    local script="$1"
+    local line tags tag
+
+    line=$(grep -i -m1 "^# Platforms:" "$script" 2>/dev/null || true)
+    if [[ -z "$line" ]]; then
+        return 0
+    fi
+
+    line=${line#*:}
+    line=${line// /}
+    IFS=',' read -ra tags <<< "$line"
+    for tag in "${tags[@]}"; do
+        if [[ "$tag" == "linux-x86_64" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 # System Check
+# Usage: check_system [install.sh ...]
+# With no scripts, the default Linux x86_64 requirement applies.
+# Scripts tagged with a non-default "# Platforms:" header are skipped here;
+# those packages decide for themselves whether to install or skip.
 check_system() {
-    local os
+    local os arch script
+    local -a required=()
     os=$(uname -s)
-    local arch
     arch=$(uname -m)
+
+    if [[ $# -eq 0 ]]; then
+        required+=("default toolchain")
+    else
+        for script in "$@"; do
+            if _pkg_requires_linux_x86_64 "$script"; then
+                required+=("$(basename "$(dirname "$script")")")
+            fi
+        done
+    fi
+
+    # Every requested package enforces its own platform.
+    if [[ ${#required[@]} -eq 0 ]]; then
+        return 0
+    fi
 
     if [[ "$os" != "Linux" ]]; then
         log_warn "This script is intended for Linux. Current OS: $os"
@@ -38,6 +81,7 @@ check_system() {
 
     if [[ "$arch" != "x86_64" ]]; then
         log_error "This setup strictly requires x86_64 structure. Current Arch: $arch"
+        log_error "Affected packages: ${required[*]}"
         return 1
     fi
 }

@@ -9,7 +9,9 @@ PKG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="${PKG_DIR}/sshfwd"
 DEST="${INSTALL_DIR}/bin/sshfwd"
 
-# sshfwd drives launchd LaunchAgents and Homebrew's autossh — macOS only
+# Platforms: darwin
+# sshfwd drives launchd LaunchAgents and Homebrew's autossh — macOS only.
+# The header above exempts it from the Linux x86_64 system check.
 if [[ "$(uname -s)" != "Darwin" ]]; then
     log_warn "sshfwd requires macOS (launchd + autossh). Skipping."
     exit 0

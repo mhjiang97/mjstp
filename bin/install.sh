@@ -44,14 +44,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Check system compat (skip in dry-run mode)
-if [[ -z "${DRY_RUN}" ]]; then
-    if ! check_system; then
-        log_error "System check failed. Aborting."
-        exit 1
-    fi
-fi
-
 # Set up logging to file if requested
 if [[ -n "${LOG_FILE}" ]]; then
     log_info "Logging output to ${LOG_FILE}"
@@ -59,8 +51,20 @@ if [[ -n "${LOG_FILE}" ]]; then
     echo "--- MJSTP install started at $(date) ---" >> "${LOG_FILE}"
 fi
 
-# Map to store dependencies
-declare -A DEPS
+# Dependency and traversal state. Bash 3.2 (the macOS /bin/bash) has no
+# associative arrays, so entries live in variables named <map>__<key>.
+map_set() {
+    printf -v "${1}__${2}" '%s' "$3"
+}
+
+map_get() {
+    local _var="${1}__${2}"
+    printf '%s' "${!_var}"
+}
+
+map_unset() {
+    unset "${1}__${2}"
+}
 
 # Discover packages and dependencies
 log_info "Discovering packages in ${SRC_DIR}..."
@@ -74,31 +78,30 @@ while IFS= read -r -d '' pkg_path; do
     dep_line=$(grep -i "^# Dependencies:" "${pkg_path}" | sed 's/# Dependencies://i' | tr -d ' ')
 
     if [[ -n "${dep_line}" ]]; then
-        DEPS[${pkg_name}]="${dep_line}"
+        map_set DEPS "${pkg_name}" "${dep_line}"
     fi
 done < <(find "${SRC_DIR}" -name "install.sh" -print0)
 
 # Sort dependencies (DFS)
-declare -A VISITED
-declare -A INSTALLING
 ORDERED_PKGS=()
 
 resolve_deps() {
     local pkg=$1
 
-    if [[ "${VISITED[${pkg}]}" == "1" ]]; then
+    if [[ "$(map_get VISITED "${pkg}")" == "1" ]]; then
         return
     fi
 
-    if [[ "${INSTALLING[${pkg}]}" == "1" ]]; then
+    if [[ "$(map_get INSTALLING "${pkg}")" == "1" ]]; then
         log_error "Circular dependency detected involving $pkg"
         exit 1
     fi
 
-    INSTALLING[${pkg}]=1
+    map_set INSTALLING "${pkg}" 1
 
     # Split dependencies by comma
-    local pkg_deps=${DEPS[${pkg}]}
+    local pkg_deps
+    pkg_deps=$(map_get DEPS "${pkg}")
     if [[ -n "${pkg_deps}" ]]; then
         IFS=',' read -ra ADDR <<< "${pkg_deps}"
         for dep in "${ADDR[@]}"; do
@@ -122,8 +125,8 @@ resolve_deps() {
         done
     fi
 
-    VISITED[${pkg}]=1
-    unset 'INSTALLING[${pkg}]'
+    map_set VISITED "${pkg}" 1
+    map_unset INSTALLING "${pkg}"
     ORDERED_PKGS+=("${pkg}")
 }
 
@@ -179,10 +182,22 @@ if [[ -n "${DRY_RUN}" ]]; then
     echo "Resolved install order (${#ORDERED_PKGS[@]} packages):"
     for i in "${!ORDERED_PKGS[@]}"; do
         pkg="${ORDERED_PKGS[$i]}"
-        deps="${DEPS[${pkg}]:-none}"
+        deps=$(map_get DEPS "${pkg}")
+        deps="${deps:-none}"
         printf "  %2d. %-15s (deps: %s)\n" "$((i+1))" "$pkg" "$deps"
     done
     exit 0
+fi
+
+# Check system compat against the packages that will actually run.
+# Packages with a non-default "# Platforms:" header are exempt.
+install_scripts=()
+for pkg in "${ORDERED_PKGS[@]}"; do
+    install_scripts+=("${SRC_DIR}/${pkg}/install.sh")
+done
+if [[ ${#install_scripts[@]} -gt 0 ]] && ! check_system "${install_scripts[@]}"; then
+    log_error "System check failed. Aborting."
+    exit 1
 fi
 
 # Create a common profile file if it doesn't exist

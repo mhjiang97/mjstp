@@ -88,3 +88,4 @@ Output is logged to `~/.mjstp_install.log`.
 - **Libraries**: `ncurses`, `xz`
 - **Bioinformatics**: `snakemake`, `htslib`, `samtools`, `bcftools`
 - **R Tools**: `radian`
+- **macOS Only**: `sshfwd` (persistent SSH port forwards via launchd + autossh; skipped on Linux)

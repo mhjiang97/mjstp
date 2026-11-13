@@ -1,0 +1,1095 @@
+#!/bin/bash
+# sshfwd: persistent SSH port-forward tunnels to any ssh host.
+# One LaunchAgent (autossh) per host; each host carries any number of forwards.
+#
+#   -R  remote forward: a port on HOST reaches a port on this Mac
+#       e.g. Magpie  sbms1:13425 -> localhost:3425
+#   -L  local forward:  a port on this Mac reaches a port on (or via) HOST
+#       e.g. localhost:8888 -> sbms1:8888
+#
+# Config: ~/.config/sshfwd/<host>.conf, one forward per line:
+#   <L|R> <listen_port> <target_host> <target_port>
+# Logs:   ~/Library/Logs/sshfwd/<host>.log
+set -euo pipefail
+
+SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+CONF_DIR="${SSHFWD_CONF_DIR:-$HOME/.config/sshfwd}"
+LOG_DIR="${SSHFWD_LOG_DIR:-$HOME/Library/Logs/sshfwd}"
+AGENT_DIR="${SSHFWD_AGENT_DIR:-$HOME/Library/LaunchAgents}"
+LABEL_PREFIX="com.mj.sshfwd"
+SSH_BIN="${SSHFWD_SSH_BIN:-/opt/homebrew/bin/ssh}"
+AUTOSSH_BIN="${SSHFWD_AUTOSSH_BIN:-/opt/homebrew/bin/autossh}"
+DOMAIN="gui/$(id -u)"
+
+LOG=""  # current host's log; read by the display helpers
+
+# Shared ssh options (override per-host huge ServerAliveInterval in ~/.ssh/config)
+SSH_OPTS=(
+  -N
+  -o ExitOnForwardFailure=yes
+  -o ServerAliveInterval=15
+  -o ServerAliveCountMax=3
+  -o TCPKeepAlive=yes
+  -o LogLevel=ERROR
+)
+
+die() { echo "sshfwd: $*" >&2; exit 1; }
+
+valid_host() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; }
+need_host() {
+  [[ -n "${1:-}" ]] || die "missing HOST (an alias from ~/.ssh/config, e.g. sbms1)"
+  valid_host "$1" || die "invalid host alias: $1"
+}
+conf_of() { printf '%s/%s.conf' "$CONF_DIR" "$1"; }
+label_of() { printf '%s.%s' "$LABEL_PREFIX" "$1"; }
+plist_of() { printf '%s/%s.plist' "$AGENT_DIR" "$(label_of "$1")"; }
+log_of() { printf '%s/%s.log' "$LOG_DIR" "$1"; }
+
+# Configured hosts, one per line
+hosts() {
+  local f
+  for f in "$CONF_DIR"/*.conf; do
+    [[ -e "$f" ]] || continue
+    f="${f##*/}"
+    echo "${f%.conf}"
+  done
+}
+
+# Normalized forward lines for a host: "DIR listen thost tport"
+forwards() {
+  local f
+  f="$(conf_of "$1")"
+  [[ -f "$f" ]] || return 0
+  awk 'NF >= 4 && ($1 == "L" || $1 == "R") { print $1, $2, $3, $4 }' "$f"
+}
+
+valid_port() { [[ "$1" =~ ^[0-9]+$ ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 )); }
+
+# parse_spec DIR SPEC -> "DIR listen thost tport"
+#   3430                 listen 3430 -> 127.0.0.1:3430
+#   13425:3425           listen 13425 -> 127.0.0.1:3425
+#   8888:node12:8888     listen 8888 -> node12:8888
+parse_spec() {
+  local dir="$1" spec="$2" a="" b="" c="" extra=""
+  IFS=: read -r a b c extra <<<"$spec"
+  [[ -z "$extra" ]] || die "bad forward spec: $spec"
+  if [[ -z "$b" ]]; then
+    b=127.0.0.1; c="$a"
+  elif [[ -z "$c" ]]; then
+    c="$b"; b=127.0.0.1
+  fi
+  valid_port "$a" && valid_port "$c" || die "bad forward spec: $spec (ports must be 1-65535)"
+  [[ "$b" =~ ^[A-Za-z0-9._-]+$ ]] || die "bad target host in spec: $spec"
+  printf '%s %s %s %s\n' "$dir" "$((10#$a))" "$b" "$((10#$c))"
+}
+
+# Human-readable route for a forward line
+fwd_desc() {
+  local h="$1" dir="$2" lp="$3" th="$4" tp="$5" tgt
+  case "$th" in
+    127.0.0.1|localhost) tgt="" ;;
+    *) tgt="$th" ;;
+  esac
+  if [[ "$dir" == L ]]; then
+    if [[ -n "$tgt" ]]; then
+      printf 'localhost:%s → %s:%s (via %s)' "$lp" "$tgt" "$tp" "$h"
+    else
+      printf 'localhost:%s → %s:%s' "$lp" "$h" "$tp"
+    fi
+  else
+    printf '%s:%s → %s:%s' "$h" "$lp" "${tgt:-localhost}" "$tp"
+  fi
+}
+
+# Fill FWD_ARGS (-L/-R ...) from forward lines on stdin
+build_fwd_args() {
+  FWD_ARGS=()
+  local dir lp th tp
+  while read -r dir lp th tp; do
+    [[ -n "${dir:-}" ]] || continue
+    FWD_ARGS[${#FWD_ARGS[@]}]="-$dir"
+    FWD_ARGS[${#FWD_ARGS[@]}]="${lp}:${th}:${tp}"
+  done
+}
+
+# autossh + ssh processes for a host's tunnel (agent or fg)
+pids() {
+  local h_re
+  h_re="$(printf '%s' "$1" | sed 's/\./\\./g')"
+  pgrep -f "^[^ ]*(autossh|ssh) (-M 0 )?-N -o ExitOnForwardFailure=yes .* ${h_re}\$" 2>/dev/null || true
+}
+
+kill_tunnel() {
+  local p
+  p="$(pids "$1")"
+  if [[ -n "${p}" ]]; then
+    kill ${p} 2>/dev/null || true
+    sleep 0.4
+    p="$(pids "$1")"
+    if [[ -n "${p}" ]]; then kill -9 ${p} 2>/dev/null || true; fi
+  fi
+}
+
+agent_loaded() { launchctl print "$DOMAIN/$(label_of "$1")" >/dev/null 2>&1; }
+
+# "cmd(pid)" of whatever listens on local TCP port, empty if free
+local_listener() {
+  lsof -nP -iTCP:"$1" -sTCP:LISTEN -Fpc 2>/dev/null |
+    awk '/^p/ { p = substr($0, 2) } /^c/ { printf "%s(%s) ", substr($0, 2), p }' | sed "s/ \$//" || true
+}
+
+# ----- display helpers (status / logs / follow only) -----
+
+color_enabled() {
+  [[ -z "${NO_COLOR+x}" && "${TERM:-}" != "dumb" && -t 1 ]]
+}
+
+color_setup() {
+  if color_enabled; then
+    RST=$'\033[0m'
+    BOLD=$'\033[1m'
+    DIM=$'\033[2m'
+    RED=$'\033[31m'
+    GREEN=$'\033[32m'
+    YELLOW=$'\033[33m'
+    CYAN=$'\033[36m'
+  else
+    RST=""
+    BOLD=""
+    DIM=""
+    RED=""
+    GREEN=""
+    YELLOW=""
+    CYAN=""
+  fi
+}
+
+strip_cr() {
+  printf '%s' "${1//$'\r'/}"
+}
+
+# ps etime ("19:50:23" or "2-03:04:05") -> "19h50m" / "2d3h4m"
+format_etime() {
+  printf '%s' "$1" | awk -F'[-:]' '
+    {
+      d=0; h=0; m=0
+      if (NF==4) { d=$1+0; h=$2+0; m=$3+0 }
+      else if (NF==3) { h=$1+0; m=$2+0 }
+      else if (NF==2) { m=$1+0 }
+      out=""
+      if (d>0) out=out d "d"
+      if (h>0) out=out h "h"
+      if (m>0 || out=="") out=out m "m"
+      printf "%s", out
+    }'
+}
+
+# seconds -> "17h38m"
+format_secs() {
+  awk -v s="${1:-0}" 'BEGIN {
+    if (s < 0) s = 0
+    d = int(s / 86400); s = s % 86400
+    h = int(s / 3600);  s = s % 3600
+    m = int(s / 60)
+    out = ""
+    if (d > 0) out = out d "d"
+    if (h > 0) out = out h "h"
+    if (m > 0 || out == "") out = out m "m"
+    printf "%s", out
+  }'
+}
+
+log_kind() {
+  local line="$1"
+  case "$line" in
+    *'Operation timed out'*|*'Connection refused'*|*'Connection reset'*|*'Could not resolve'*|*"Can't assign"*|*'Broken pipe'*|*'port forwarding failed'*|*'exited with error'*|*'connect_to '*' failed'*|*'connect to host '*' failure'*)
+      printf '%s' err
+      ;;
+    *'starting ssh'*|*'ssh child pid'*|*'autossh start'*)
+      printf '%s' ok
+      ;;
+    *'received signal to exit'*)
+      printf '%s' warn
+      ;;
+    *'TCP_NODELAY'*)
+      printf '%s' noise
+      ;;
+    *)
+      printf '%s' info
+      ;;
+  esac
+}
+
+color_for_kind() {
+  case "$1" in
+    err) printf '%s' "$RED" ;;
+    ok) printf '%s' "$GREEN" ;;
+    warn) printf '%s' "$YELLOW" ;;
+    noise) printf '%s' "$DIM" ;;
+    *) printf '%s' "" ;;
+  esac
+}
+
+print_log_line() {
+  local line c
+  line="$(strip_cr "$1")"
+  [[ -n "$line" ]] || return 0
+  c="$(color_for_kind "$(log_kind "$line")")"
+  if [[ -n "$c" ]]; then
+    printf '%s%s%s\n' "$c" "$line" "$RST"
+  else
+    printf '%s\n' "$line"
+  fi
+}
+
+field() {
+  local label="$1" value="$2" c="${3:-}"
+  if [[ -n "$c" ]]; then
+    printf '  %s%-14s%s %s%s%s\n' "$DIM" "$label" "$RST" "$c" "$value" "$RST"
+  else
+    printf '  %s%-14s%s %s\n' "$DIM" "$label" "$RST" "$value"
+  fi
+}
+
+ts_to_epoch() {
+  date -j -f '%Y-%m-%d %H:%M:%S' "$1" +%s 2>/dev/null || true
+}
+
+# ----- per-host status -----
+
+# Sets HS_STATE (running|warning|down|stopped), HS_REASON, HS_AGENT, and
+# HS_AUTO_PID/ETIME, HS_SSH_PID/ETIME arrays.
+host_state() {
+  local h="$1"
+  HS_AGENT=0
+  agent_loaded "$h" && HS_AGENT=1
+
+  HS_AUTO_PID=(); HS_AUTO_ETIME=(); HS_SSH_PID=(); HS_SSH_ETIME=()
+  local p plist pid etime comm
+  p="$(pids "$h")"
+  if [[ -n "$p" ]]; then
+    plist="$(echo "$p" | tr '\n' ',' | sed 's/,$//')"
+    while read -r pid etime comm || [[ -n "${pid:-}" ]]; do
+      [[ -n "$pid" ]] || continue
+      case "$comm" in
+        *autossh*)
+          HS_AUTO_PID[${#HS_AUTO_PID[@]}]="$pid"
+          HS_AUTO_ETIME[${#HS_AUTO_ETIME[@]}]="$etime"
+          ;;
+        *)
+          HS_SSH_PID[${#HS_SSH_PID[@]}]="$pid"
+          HS_SSH_ETIME[${#HS_SSH_ETIME[@]}]="$etime"
+          ;;
+      esac
+    done < <(ps -p "$plist" -o pid=,etime=,command= 2>/dev/null || true)
+  fi
+
+  local have_auto=0 have_ssh=0
+  [[ ${#HS_AUTO_PID[@]} -gt 0 ]] && have_auto=1
+  [[ ${#HS_SSH_PID[@]} -gt 0 ]] && have_ssh=1
+
+  HS_REASON=""
+  if [[ $have_auto -eq 1 && $have_ssh -eq 1 && $HS_AGENT -eq 1 ]]; then
+    HS_STATE="running"
+  elif [[ $have_auto -eq 1 || $have_ssh -eq 1 ]]; then
+    HS_STATE="warning"
+    [[ $HS_AGENT -eq 0 ]] && HS_REASON="LaunchAgent not loaded"
+    if [[ $have_auto -eq 1 && $have_ssh -eq 0 ]]; then
+      HS_REASON="${HS_REASON:+$HS_REASON; }autossh running, ssh child not running (reconnecting?)"
+    elif [[ $have_auto -eq 0 && $have_ssh -eq 1 ]]; then
+      HS_REASON="${HS_REASON:+$HS_REASON; }ssh running without autossh (fg?)"
+    fi
+  elif [[ $HS_AGENT -eq 1 ]]; then
+    HS_STATE="down"
+    HS_REASON="LaunchAgent loaded, process not running"
+  elif [[ -f "$(plist_of "$h")" ]]; then
+    HS_STATE="down"
+    HS_REASON="LaunchAgent installed but not loaded"
+  else
+    HS_STATE="stopped"
+  fi
+}
+
+state_color() {
+  case "$1" in
+    running) printf '%s' "$GREEN" ;;
+    warning) printf '%s' "$YELLOW" ;;
+    stopped) printf '%s' "$DIM" ;;
+    *) printf '%s' "$RED" ;;
+  esac
+}
+
+tilde() { printf '%s' "${1/#$HOME/~}"; }
+
+# Probe "addr port" pairs (stdin) from HOST in one ssh call; prints "ok"/"fail" per line,
+# or nothing if HOST is unreachable.
+remote_probe() {
+  local h="$1" a p script=""
+  while read -r a p; do
+    [[ -n "${a:-}" ]] || continue
+    script+="if (command -v nc >/dev/null 2>&1 && nc -z -w 3 $a $p) || (exec 3<>/dev/tcp/$a/$p) 2>/dev/null; then echo ok; else echo fail; fi;"
+  done
+  [[ -n "$script" ]] || return 0
+  "$SSH_BIN" -o BatchMode=yes -o ConnectTimeout=8 -o LogLevel=ERROR "$h" "bash -c '$script'" 2>/dev/null || true
+}
+
+# Summarise log events since the last start. Sets HL_SINCE HL_RECON HL_ERRS HL_LASTERR HL_LASTERR_TS HL_EVENTS
+log_health() {
+  local f="$1" rec
+  HL_SINCE=""; HL_RECON=0; HL_ERRS=0; HL_LASTERR=""; HL_LASTERR_TS=""; HL_EVENTS=""
+  [[ -f "$f" ]] || return 0
+  local parsed
+  parsed="$(tail -n 400 "$f" | awk -v host="$2" -v stream=0 "$LOG_PARSE_AWK")"
+  [[ -n "$parsed" ]] || return 0
+  HL_EVENTS="$(printf '%s\n' "$parsed" | tail -n 6)"
+  while IFS= read -r rec; do
+    case "$rec" in
+      SINCE=*) HL_SINCE="${rec#SINCE=}" ;;
+      RECON=*) HL_RECON="${rec#RECON=}" ;;
+      ERRS=*) HL_ERRS="${rec#ERRS=}" ;;
+      LASTERR_TS=*) HL_LASTERR_TS="${rec#LASTERR_TS=}" ;;
+      LASTERR=*) HL_LASTERR="${rec#LASTERR=}" ;;
+    esac
+  done < <(printf '%s\n' "$parsed" | awk -F'\t' '
+    { n++; k[n] = $4; m[n] = $5; ts[n] = $1 " " $2; if ($4 == "start") s = n }
+    END {
+      if (s == 0) s = 1
+      print "SINCE=" ts[s]
+      for (i = s + 1; i <= n; i++) {
+        if (k[i] == "warn") r++
+        if (k[i] == "err") { e++; le = m[i]; lt = ts[i] }
+      }
+      print "RECON=" r + 0; print "ERRS=" e + 0
+      if (le != "") { print "LASTERR_TS=" lt; print "LASTERR=" le }
+    }')
+}
+
+status_host() {
+  local h="$1" check="${2:-0}"
+  host_state "$h"
+  LOG="$(log_of "$h")"
+  local sc up=""
+  sc="$(state_color "$HS_STATE")"
+  [[ ${#HS_SSH_ETIME[@]} -gt 0 ]] && up="$(format_etime "${HS_SSH_ETIME[0]}")"
+
+  # header
+  printf '%s●%s %s%s%s  %s%s%s' "$sc" "$RST" "$BOLD" "$h" "$RST" "$BOLD$sc" "$HS_STATE" "$RST"
+  [[ -n "$up" ]] && printf '  %sconnected %s%s' "$DIM" "$up" "$RST"
+  [[ -n "$HS_REASON" ]] && printf '  %s%s%s' "$YELLOW" "$HS_REASON" "$RST"
+  printf '\n'
+
+  # forwards: rows "dir src dst chk ck"; checks are local unless --check
+  local dir lp th tp src dst lis chk ck rows="" probes="" idx=() i=0
+  local -a fl=()
+  while read -r dir lp th tp; do
+    [[ -n "${dir:-}" ]] || continue
+    fl+=("$dir $lp $th $tp")
+  done < <(forwards "$h")
+
+  local -a remote=()
+  if [[ $check -eq 1 && "$HS_STATE" != stopped && ${#fl[@]} -gt 0 ]]; then
+    for i in "${!fl[@]}"; do
+      read -r dir lp th tp <<<"${fl[$i]}"
+      if [[ "$dir" == R ]]; then probes+="127.0.0.1 $lp"$'\n'; else probes+="$th $tp"$'\n'; fi
+    done
+    while IFS= read -r x; do remote+=("$x"); done < <(printf '%s' "$probes" | remote_probe "$h")
+    [[ ${#remote[@]} -gt 0 ]] || printf '  %scould not reach %s for --check%s\n' "$RED" "$h" "$RST"
+  fi
+
+  for i in ${fl[@]+"${!fl[@]}"}; do
+    read -r dir lp th tp <<<"${fl[$i]}"
+    local shown="$th"
+    case "$th" in 127.0.0.1|localhost) shown="" ;; esac
+    chk=""; ck=""
+    if [[ "$dir" == L ]]; then
+      src="localhost:$lp"
+      if [[ -n "$shown" ]]; then dst="$shown:$tp (via $h)"; else dst="$h:$tp"; fi
+      if [[ "$HS_STATE" != stopped ]]; then
+        lis="$(local_listener "$lp")"
+        case "$lis" in
+          *ssh*) chk="✓ listening here"; ck=ok ;;
+          "") chk="✗ not listening here"; ck=err ;;
+          *) chk="✗ port taken by $lis"; ck=err ;;
+        esac
+      fi
+      if [[ ${#remote[@]} -gt 0 ]]; then
+        if [[ "${remote[$i]:-}" == ok ]]; then chk+=" · ✓ target up"
+        else chk+=" · ✗ nothing on target"; ck=err; fi
+      fi
+    else
+      src="$h:$lp"
+      dst="${shown:-localhost}:$tp"
+      if [[ -z "$shown" ]]; then
+        lis="$(local_listener "$tp")"
+        if [[ -n "$lis" ]]; then chk="✓ target up (${lis%%(*})"; ck=ok
+        else chk="✗ nothing on localhost:$tp"; ck=err; fi
+      fi
+      if [[ ${#remote[@]} -gt 0 ]]; then
+        if [[ "${remote[$i]:-}" == ok ]]; then chk+="${chk:+ · }✓ open on $h"
+        else chk+="${chk:+ · }✗ not open on $h"; ck=err; fi
+      fi
+    fi
+    rows+="-$dir"$'\t'"$src"$'\t'"$dst"$'\t'"$chk"$'\t'"$ck"$'\n'
+  done
+  if [[ -n "$rows" ]]; then
+    printf '%s' "$rows" | awk -F'\t' -v RST="$RST" -v DIM="$DIM" -v RED="$RED" -v GREEN="$GREEN" -v CYAN="$CYAN" '
+      function pad(s, wd,   r) { r = s; while (length(r) < wd) r = r " "; return r }
+      { n++; for (i = 1; i <= 5; i++) c[n, i] = $i; if (length($2) > w2) w2 = length($2); if (length($3) > w3) w3 = length($3) }
+      END {
+        for (r = 1; r <= n; r++) {
+          kc = c[r, 5] == "ok" ? GREEN : c[r, 5] == "err" ? RED : ""
+          printf "    %s  %s%s%s → %s%s%s  %s%s%s\n", c[r, 1], CYAN, pad(c[r, 2], w2), RST, CYAN, pad(c[r, 3], w3), RST, kc, c[r, 4], RST
+        }
+      }'
+  else
+    printf '    %sno forwards%s\n' "$DIM" "$RST"
+  fi
+
+  if [[ "$HS_STATE" == stopped ]]; then
+    printf '  %sstopped — config kept; bring it back with: sshfwd start %s%s\n' "$DIM" "$h" "$RST"
+  else
+    # agent + processes on one line
+    local agent pidtxt=""
+    if [[ $HS_AGENT -eq 1 ]]; then agent="${GREEN}loaded${RST}"; else agent="${YELLOW}not loaded${RST}"; fi
+    [[ ${#HS_AUTO_PID[@]} -gt 0 ]] && pidtxt="autossh ${HS_AUTO_PID[*]}"
+    [[ ${#HS_SSH_PID[@]} -gt 0 ]] && pidtxt="${pidtxt:+$pidtxt → }ssh ${HS_SSH_PID[*]}"
+    printf '  %sagent%s    %s · %s%s%s\n' "$DIM" "$RST" "$agent" "$DIM" "$(label_of "$h")${pidtxt:+ · $pidtxt}" "$RST"
+  fi
+
+  # health since last start
+  log_health "$LOG" "$h"
+  if [[ -n "$HL_SINCE" ]]; then
+    local hc="$GREEN" htxt="since start ${HL_SINCE#????-??-?? }" ago=""
+    [[ "$HS_STATE" == stopped ]] && { hc="$DIM"; htxt="last run $HL_SINCE"; }
+    if [[ "$HL_RECON" -gt 0 ]]; then htxt+=" · $HL_RECON reconnect$([[ $HL_RECON -gt 1 ]] && echo s)"; hc="$YELLOW"
+    else htxt+=" · no reconnects"; fi
+    if [[ "$HL_ERRS" -gt 0 ]]; then
+      local e; e="$(ts_to_epoch "$HL_LASTERR_TS")"
+      [[ -n "$e" ]] && ago=" ($(format_secs $(( $(date +%s) - e ))) ago)"
+      htxt+=" · $HL_ERRS error$([[ $HL_ERRS -gt 1 ]] && echo s), last$ago: $HL_LASTERR"
+      [[ "$hc" == "$GREEN" ]] && hc="$YELLOW"
+      [[ ${#HS_SSH_PID[@]} -eq 0 ]] && hc="$RED"
+    else
+      htxt+=" · no errors"
+    fi
+    printf '  %shealth%s   %s%s%s\n' "$DIM" "$RST" "$hc" "$htxt" "$RST"
+  fi
+
+  # recent events, same format as `sshfwd logs`
+  if [[ -n "$HL_EVENTS" ]]; then
+    printf '  %srecent%s\n' "$DIM" "$RST"
+    printf '%s\n' "$HL_EVENTS" | render_events 1 0 4 0 | sed 's/^/  /'
+  fi
+  printf '  %sfiles%s    %s%s · %s%s\n' "$DIM" "$RST" "$DIM" "$(tilde "$(conf_of "$h")")" "$(tilde "$LOG")" "$RST"
+}
+
+# status [HOST] [-c|--check]
+cmd_status() {
+  color_setup
+  local list="" h first=1 check=0 a
+  for a in "$@"; do
+    case "$a" in
+      -c|--check) check=1 ;;
+      *) need_host "$a"; list="$a" ;;
+    esac
+  done
+  [[ -n "$list" ]] || list="$(hosts)"
+  if [[ -z "$list" ]]; then
+    echo "No tunnels configured. Add one:  sshfwd add HOST [-R|-L] SPEC   (see: sshfwd help)"
+    return 0
+  fi
+  while IFS= read -r h; do
+    [[ $first -eq 1 ]] || echo
+    first=0
+    status_host "$h" "$check"
+  done <<<"$list"
+  if [[ $check -eq 0 ]]; then
+    printf '\n%schecks are local only · sshfwd status [HOST] --check also tests each port from %s%s\n' "$DIM" "the server end" "$RST"
+  fi
+}
+
+cmd_ls() {
+  color_setup
+  local list h dir lp th tp up lis chk ck src dst first rows="" notes=""
+  list="$(hosts)"
+  if [[ -z "$list" ]]; then
+    echo "No tunnels configured. Add one:  sshfwd add HOST [-R|-L] SPEC   (see: sshfwd help)"
+    return 0
+  fi
+  while IFS= read -r h; do
+    host_state "$h"
+    up="-"
+    if [[ ${#HS_SSH_ETIME[@]} -gt 0 ]]; then up="$(format_etime "${HS_SSH_ETIME[0]}")"; fi
+    first=1
+    while read -r dir lp th tp; do
+      [[ -n "${dir:-}" ]] || continue
+      case "$th" in 127.0.0.1|localhost) th="" ;; esac
+      if [[ "$dir" == L ]]; then
+        src="localhost:$lp"
+        if [[ -n "$th" ]]; then dst="$th:$tp (via $h)"; else dst="$h:$tp"; fi
+      else
+        src="$h:$lp"
+        dst="${th:-localhost}:$tp"
+      fi
+      chk=""; ck=""
+      if [[ "$dir" == L && "$HS_STATE" != stopped ]]; then
+        lis="$(local_listener "$lp")"
+        case "$lis" in
+          *ssh*) chk="✓ listening"; ck=ok ;;
+          "") chk="✗ not listening"; ck=err ;;
+          *) chk="✗ port taken by $lis"; ck=err ;;
+        esac
+      fi
+      if [[ $first -eq 1 ]]; then
+        rows+="$h"$'\t'"$HS_STATE"$'\t'"$up"$'\t'"-$dir"$'\t'"$src"$'\t'"$dst"$'\t'"$chk"$'\t'"$ck"$'\n'
+      else
+        rows+=$'\t\t\t'"-$dir"$'\t'"$src"$'\t'"$dst"$'\t'"$chk"$'\t'"$ck"$'\n'
+      fi
+      first=0
+    done < <(forwards "$h")
+    if [[ $first -eq 1 ]]; then
+      rows+="$h"$'\t'"$HS_STATE"$'\t'"$up"$'\t\t(no forwards)\t\t\t'$'\n'
+    fi
+    if [[ "$HS_STATE" != running && "$HS_STATE" != stopped ]]; then
+      notes+="$h: ${HS_REASON:-$HS_STATE} — details: sshfwd status $h"$'\n'
+    fi
+  done <<<"$list"
+
+  printf '%s' "$rows" | awk -F'\t' -v RST="$RST" -v BOLD="$BOLD" -v DIM="$DIM" \
+    -v RED="$RED" -v GREEN="$GREEN" -v YELLOW="$YELLOW" -v CYAN="$CYAN" '
+    function pad(s, wd,   r) { r = s; while (length(r) < wd) r = r " "; return r }
+    function scol(s) { return s == "running" ? GREEN : s == "warning" ? YELLOW : s == "stopped" ? DIM : RED }
+    BEGIN { split("HOST STATE UP DIR LISTEN TARGET", H, " "); for (i = 1; i <= 6; i++) w[i] = length(H[i]) }
+    { n++; for (i = 1; i <= 8; i++) c[n, i] = $i; for (i = 1; i <= 6; i++) if (length($i) > w[i]) w[i] = length($i) }
+    END {
+      printf "  %s%s  %s  %s  %s  %s   %s%s\n", DIM, pad(H[1], w[1]), pad(H[2], w[2]), pad(H[3], w[3]), pad(H[4], w[4]), pad(H[5], w[5]), H[6], RST
+      for (r = 1; r <= n; r++) {
+        sc = scol(c[r, 2])
+        dot = (c[r, 1] != "") ? sc "●" RST : " "
+        ckc = c[r, 8] == "ok" ? GREEN : c[r, 8] == "err" ? RED : ""
+        printf "%s %s%s%s  %s%s%s  %s  %s  %s%s%s %s %s%s%s  %s%s%s\n", dot,
+          BOLD, pad(c[r, 1], w[1]), RST, sc, pad(c[r, 2], w[2]), RST, pad(c[r, 3], w[3]),
+          pad(c[r, 4], w[4]), CYAN, pad(c[r, 5], w[5]), RST, (c[r, 4] == "" ? " " : "→"),
+          CYAN, pad(c[r, 6], w[6]), RST, ckc, c[r, 7], RST
+      }
+    }'
+  if [[ -n "$notes" ]]; then
+    printf '\n%s' "$YELLOW"
+    printf '%s' "$notes"
+    printf '%s' "$RST"
+  fi
+  return 0
+}
+
+# ----- agent lifecycle -----
+
+write_plist() {
+  local h="$1" label plist
+  label="$(label_of "$h")"
+  plist="$(plist_of "$h")"
+  mkdir -p "$AGENT_DIR" "$LOG_DIR"
+  cat >"$plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${SELF}</string>
+    <string>run-agent</string>
+    <string>${h}</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>${LOG_DIR}/${h}.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>${LOG_DIR}/${h}.launchd.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>${HOME}</string>
+  </dict>
+</dict>
+</plist>
+PLIST
+}
+
+# (Re)start a host's agent with its current config
+start_host() {
+  local h="$1" label plist
+  [[ -n "$(forwards "$h")" ]] || die "no forwards configured for $h (add one: sshfwd add $h PORT)"
+  label="$(label_of "$h")"
+  plist="$(plist_of "$h")"
+  launchctl bootout "$DOMAIN/$label" 2>/dev/null || true
+  kill_tunnel "$h"
+  write_plist "$h"
+  launchctl bootstrap "$DOMAIN" "$plist"
+  launchctl enable "$DOMAIN/$label" 2>/dev/null || true
+  launchctl kickstart -k "$DOMAIN/$label"
+}
+
+stop_host() {
+  local h="$1"
+  launchctl bootout "$DOMAIN/$(label_of "$h")" 2>/dev/null || true
+  rm -f "$(plist_of "$h")"
+  kill_tunnel "$h"
+}
+
+host_installed() { [[ -f "$(plist_of "$1")" ]] || agent_loaded "$1"; }
+
+# After a (re)start, watch the new log lines for a few seconds for a failed forward.
+# Returns 1 (and prints the error) if ssh rejected a forward.
+check_start() {
+  local h="$1" from="$2" i new
+  LOG="$(log_of "$h")"
+  for i in 1 2 3 4 5 6 7 8; do
+    sleep 1
+    new="$(tail -c +"$(( from + 1 ))" "$LOG" 2>/dev/null || true)"
+    if grep -qE 'forwarding failed|Address already in use|cannot listen|Could not request' <<<"$new"; then
+      grep -E 'forwarding failed|Address already in use|cannot listen|Could not request' <<<"$new" |
+        awk "!seen[\$0]++" | tail -n 3 | sed 's/^/  /' >&2
+      return 1
+    fi
+  done
+  return 0
+}
+
+log_size() { [[ -f "$1" ]] && wc -c <"$1" | tr -d ' ' || echo 0; }
+
+# Expand "--all" / missing host into the host list for start/stop/restart
+target_hosts() {
+  if [[ "${1:-}" == "--all" ]]; then
+    hosts
+  elif [[ -n "${1:-}" ]]; then
+    need_host "$1"
+    echo "$1"
+  else
+    local list n
+    list="$(hosts)"
+    n="$(grep -c . <<<"$list" || true)"
+    [[ "$n" -eq 1 ]] || die "specify HOST or --all (configured: $(echo $list))"
+    echo "$list"
+  fi
+}
+
+cmd_start() {
+  local h list
+  list="$(target_hosts "${1:-}")"
+  [[ -n "$list" ]] || die "no tunnels configured"
+  while IFS= read -r h; do
+    start_host "$h"
+    echo "started $h"
+  done <<<"$list"
+  sleep 1.5
+  cmd_ls
+}
+
+cmd_stop() {
+  local h list
+  list="$(target_hosts "${1:-}")"
+  while IFS= read -r h; do
+    [[ -n "$h" ]] || continue
+    stop_host "$h"
+    echo "stopped $h (config kept; start again with: sshfwd start $h)"
+  done <<<"$list"
+}
+
+# add HOST [-R|-L] SPEC... — default direction -R (expose a local port on HOST)
+cmd_add() {
+  local h="${1:-}"
+  need_host "$h"
+  shift
+  [[ $# -gt 0 ]] || die "usage: sshfwd add HOST [-R|-L] SPEC..."
+  mkdir -p "$CONF_DIR"
+  local conf dir=R line added="" lp other lis
+  conf="$(conf_of "$h")"
+  touch "$conf"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -R|-L) dir="${1#-}" ;;
+      *)
+        line="$(parse_spec "$dir" "$1")"
+        lp="$(cut -d' ' -f2 <<<"$line")"
+        if forwards "$h" | grep -qxF "$line"; then
+          echo "already configured: -$dir $(fwd_desc "$h" $line)"
+        elif forwards "$h" | awk -v d="$dir" -v p="$lp" '$1 == d && $2 == p { f = 1 } END { exit !f }'; then
+          die "-$dir $lp is already forwarded on $h to another target; remove it first: sshfwd rm $h -$dir $lp"
+        else
+          if [[ "$dir" == L ]]; then
+            for other in $(hosts); do
+              if forwards "$other" | awk -v p="$lp" '$1 == "L" && $2 == p { f = 1 } END { exit !f }'; then
+                die "local port $lp is already used by tunnel $other"
+              fi
+            done
+            lis="$(local_listener "$lp")"
+            [[ -z "$lis" ]] || die "local port $lp is already in use by $lis"
+          fi
+          echo "$line" >>"$conf"
+          added="${added}${line}"$'\n'
+          echo "+ -$dir $(fwd_desc "$h" $line)"
+        fi
+        ;;
+    esac
+    shift
+  done
+  [[ -n "$(forwards "$h")" ]] || { rm -f "$conf"; die "nothing to forward"; }
+  if [[ -z "$added" ]] && host_installed "$h"; then
+    return 0
+  fi
+
+  local from
+  from="$(log_size "$(log_of "$h")")"
+  start_host "$h"
+  if ! check_start "$h" "$from"; then
+    if [[ -n "$added" ]]; then
+      echo "ssh rejected a forward — rolling back the new forward(s) and restoring $h" >&2
+      grep -vxF -f <(printf '%s' "$added") "$conf" >"$conf.tmp" || true
+      mv "$conf.tmp" "$conf"
+      if [[ -n "$(forwards "$h")" ]]; then
+        start_host "$h"
+      else
+        stop_host "$h"
+        rm -f "$conf"
+      fi
+    fi
+    exit 1
+  fi
+  cmd_ls
+}
+
+# rm HOST [-R|-L] PORT...   cancel forwards (by listen port)
+# rm HOST --all             cancel the whole tunnel and forget it
+cmd_rm() {
+  local h="${1:-}"
+  need_host "$h"
+  shift
+  [[ $# -gt 0 ]] || die "usage: sshfwd rm HOST [-R|-L] PORT...  |  rm HOST --all"
+  local conf
+  conf="$(conf_of "$h")"
+  [[ -f "$conf" ]] || die "no tunnel configured for $h"
+
+  if [[ "$1" == "--all" ]]; then
+    stop_host "$h"
+    rm -f "$conf"
+    echo "closed tunnel $h and removed its config"
+    return 0
+  fi
+
+  local dir="" removed=0 lines
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -R|-L) dir="${1#-}" ;;
+      *)
+        valid_port "$1" || die "not a port: $1 (rm takes the listen port, e.g. rm $h 3430)"
+        lines="$(forwards "$h" | awk -v d="$dir" -v p="$((10#$1))" '(d == "" || $1 == d) && $2 == p')"
+        if [[ -z "$lines" ]]; then
+          echo "no ${dir:+-$dir }forward on port $1 for $h" >&2
+        else
+          while read -r line; do
+            echo "- $(fwd_desc "$h" $line)"
+          done <<<"$lines"
+          forwards "$h" | grep -vxF -f <(printf '%s\n' "$lines") >"$conf.tmp" || true
+          mv "$conf.tmp" "$conf"
+          removed=1
+        fi
+        ;;
+    esac
+    shift
+  done
+  [[ $removed -eq 1 ]] || exit 1
+
+  if [[ -z "$(forwards "$h")" ]]; then
+    stop_host "$h"
+    rm -f "$conf"
+    echo "no forwards left — closed tunnel $h"
+  elif host_installed "$h"; then
+    start_host "$h"
+    sleep 1.5
+    cmd_ls
+  else
+    echo "saved (tunnel $h is stopped)"
+  fi
+}
+
+# LaunchAgent entrypoint: one autossh per host; KeepAlive restarts it if it dies.
+run_agent() {
+  local h="${1:-}" fw
+  need_host "$h"
+  LOG="$(log_of "$h")"
+  fw="$(forwards "$h")"
+  [[ -n "$fw" ]] || { sleep 30; die "no forwards configured for $h"; }
+  build_fwd_args <<<"$fw"
+  mkdir -p "$(dirname "$LOG")"
+  echo "[$(date '+%F %T')] autossh start -> ${h} ${FWD_ARGS[*]}" >>"$LOG"
+  export AUTOSSH_GATETIME=0
+  export AUTOSSH_POLL=30
+  export AUTOSSH_PATH="$SSH_BIN"
+  export AUTOSSH_LOGFILE="$LOG"
+  # -M 0: no monitor port; rely on ServerAlive* + LaunchAgent KeepAlive
+  exec "$AUTOSSH_BIN" -M 0 "${SSH_OPTS[@]}" "${FWD_ARGS[@]}" "$h" >>"$LOG" 2>&1
+}
+
+cmd_fg() {
+  local h
+  h="$(target_hosts "${1:-}")"
+  local fw
+  fw="$(forwards "$h")"
+  [[ -n "$fw" ]] || die "no forwards configured for $h"
+  host_installed "$h" && die "$h already runs as a LaunchAgent; stop it first (sshfwd stop $h)"
+  build_fwd_args <<<"$fw"
+  LOG="$(log_of "$h")"
+  mkdir -p "$LOG_DIR"
+  echo "[$(date '+%F %T')] foreground ssh -> ${h} ${FWD_ARGS[*]}" | tee -a "$LOG"
+  exec "$SSH_BIN" "${SSH_OPTS[@]}" "${FWD_ARGS[@]}" "$h"
+}
+
+# ----- logs / follow -----
+
+# Raw log lines -> "date<TAB>time<TAB>host<TAB>kind<TAB>message"
+# kind: start ok info warn err stop. Handles tail's "==> file <==" headers.
+read -r -d '' LOG_PARSE_AWK <<'AWK' || true
+function pretty(args,   n, a, i, out, s) {
+  n = split(args, a, " "); out = ""
+  for (i = 1; i <= n; i++) {
+    if (a[i] == "-R" || a[i] == "-L") {
+      s = a[i + 1]; gsub(/:(127\.0\.0\.1|localhost):/, ":", s)
+      out = out (out == "" ? "" : "  ") a[i] " " s; i++
+    }
+  }
+  return out
+}
+function emit(k, m) { print d "\t" t "\t" h "\t" k "\t" m; if (stream) fflush() }
+BEGIN { h = host; d = ""; t = "" }
+{
+  sub(/\r$/, "")
+  if ($0 ~ /^==> .* <==$/) {
+    f = $0; sub(/^==> /, "", f); sub(/ <==$/, "", f); sub(/.*\//, "", f); sub(/\.log$/, "", f)
+    h = f; next
+  }
+  if ($0 ~ /^[ \t]*$/) next
+  line = $0
+  if (match(line, /^\[[0-9-]+ [0-9:]+\] /)) {
+    d = substr(line, 2, 10); t = substr(line, 13, 8); line = substr(line, RLENGTH + 1)
+  } else if (match(line, /^[0-9]+\/[0-9]+\/[0-9]+ [0-9:]+ /)) {
+    d = substr(line, 1, 10); gsub(/\//, "-", d); t = substr(line, 12, 8); line = substr(line, RLENGTH + 1)
+  }
+  sub(/^autossh\[[0-9]+\]: /, "", line)
+  if (line ~ /^autossh start -> /) { sub(/^autossh start -> [^ ]+ ?/, "", line); emit("start", "started   " pretty(line)); next }
+  if (line ~ /^foreground ssh -> /) { sub(/^foreground ssh -> [^ ]+ ?/, "", line); emit("start", "started in foreground   " pretty(line)); next }
+  if (line ~ /monitoring disabled|TCP_NODELAY|^\*\* /) next
+  if (line ~ /^starting ssh \(count [0-9]+\)/) {
+    n = line; gsub(/[^0-9]/, "", n)
+    if (n + 0 > 1) emit("warn", "reconnecting (attempt " n ")")
+    next
+  }
+  if (line ~ /^ssh child pid is /) { n = line; sub(/.* /, "", n); emit("ok", "ssh running (pid " n ")"); next }
+  if (line ~ /received signal to exit/) { emit("stop", "stopped"); next }
+  if (line ~ /ssh exited with error status [0-9]+/) {
+    n = line; sub(/.*status /, "", n); sub(/;.*/, "", n); emit("err", "ssh exited (status " n ")"); next
+  }
+  sub(/^Error: /, "", line)
+  if (line ~ /timed out|refused|reset|Could not resolve|Can.t assign|Broken pipe|failed|failure|denied|Host key|No route|unreachable|already in use|cannot listen/)
+    emit("err", line)
+  else
+    emit("info", line)
+}
+AWK
+
+# Parsed events -> display. collapse=1 folds repeats into "×N".
+read -r -d '' LOG_RENDER_AWK <<'AWK' || true
+function col(k) { return k == "err" ? RED : (k == "warn" || k == "stop") ? YELLOW : (k == "ok" || k == "start") ? GREEN : "" }
+function sym(k) { return k == "err" ? "✗" : k == "warn" ? "↻" : k == "ok" ? "●" : k == "start" ? "▶" : k == "stop" ? "■" : "·" }
+function out(   hc, x) {
+  if (pd != ld || first) {
+    if (!first) print ""
+    print DIM "── " (pd == "" ? "(undated)" : pd) " ──" RST
+    ld = pd; first = 0
+  }
+  x = (pc > 1 ? "  " DIM "×" pc RST : "")
+  hc = showhost ? BOLD sprintf("%-" hw "s", ph) RST "  " : ""
+  print "  " DIM (pt == "" ? "        " : pt) RST "  " hc col(pk) sym(pk) " " pm RST x
+  if (stream) fflush()
+}
+BEGIN { FS = "\t"; first = 1 }
+{
+  if (collapse && n > 0 && $3 == ph && $4 == pk && $5 == pm) { pc++; next }
+  if (n > 0) out()
+  n = 1; pd = $1; pt = $2; ph = $3; pk = $4; pm = $5; pc = 1
+  if (!collapse) { out(); n = 0 }
+}
+END { if (n > 0) out() }
+AWK
+
+render_events() {  # render_events COLLAPSE SHOWHOST HOSTWIDTH STREAM
+  awk -v collapse="$1" -v showhost="$2" -v hw="$3" -v stream="$4" \
+    -v RST="$RST" -v BOLD="$BOLD" -v DIM="$DIM" -v RED="$RED" -v GREEN="$GREEN" -v YELLOW="$YELLOW" \
+    "$LOG_RENDER_AWK"
+}
+
+# Fill LOG_FILES / LOG_HOSTS for an optional HOST (default: all configured hosts)
+collect_logs() {
+  local h="${1:-}" x
+  LOG_FILES=(); LOG_HOSTS=(); LOG_HW=4
+  if [[ -n "$h" ]]; then
+    LOG_FILES=("$(log_of "$h")"); LOG_HOSTS=("$h")
+  else
+    while IFS= read -r x; do
+      [[ -n "$x" ]] || continue
+      LOG_FILES+=("$(log_of "$x")"); LOG_HOSTS+=("$x")
+    done < <(hosts)
+  fi
+  for x in ${LOG_HOSTS[@]+"${LOG_HOSTS[@]}"}; do
+    if [[ ${#x} -gt $LOG_HW ]]; then LOG_HW=${#x}; fi
+  done
+}
+
+# logs [HOST] [N] [--raw]
+cmd_logs() {
+  color_setup
+  local n=30 raw=0 h="" a
+  for a in "$@"; do
+    case "$a" in
+      --raw) raw=1 ;;
+      *) if [[ "$a" =~ ^[0-9]+$ ]]; then n="$a"; else need_host "$a"; h="$a"; fi ;;
+    esac
+  done
+  collect_logs "$h"
+  local -a files=() names=()
+  local i=0
+  while [[ $i -lt ${#LOG_FILES[@]} ]]; do
+    if [[ -f "${LOG_FILES[$i]}" ]]; then files+=("${LOG_FILES[$i]}"); names+=("${LOG_HOSTS[$i]}"); fi
+    i=$(( i + 1 ))
+  done
+  if [[ ${#files[@]} -eq 0 ]]; then
+    if [[ -n "$h" ]]; then die "no log for $h yet ($(log_of "$h"))"; fi
+    die "no logs yet"
+  fi
+
+  if [[ $raw -eq 1 ]]; then
+    i=0
+    while [[ $i -lt ${#files[@]} ]]; do
+      if [[ ${#files[@]} -gt 1 ]]; then
+        [[ $i -eq 0 ]] || echo
+        printf '%s==> %s (%s)%s\n' "$BOLD" "${names[$i]}" "${files[$i]}" "$RST"
+      fi
+      tail -n "$n" "${files[$i]}" | while IFS= read -r line || [[ -n "${line:-}" ]]; do
+        print_log_line "$line"
+      done
+      i=$(( i + 1 ))
+    done
+    return 0
+  fi
+
+  local multi=0 out
+  [[ ${#files[@]} -gt 1 ]] && multi=1
+  out="$(tail -n $(( n * 4 + 20 )) "${files[@]}" |
+    awk -v host="${names[0]}" -v stream=0 "$LOG_PARSE_AWK" |
+    sort -s -t $'\t' -k1,1 -k2,2 | tail -n "$n" |
+    render_events 1 "$multi" "$LOG_HW" 0)"
+  if [[ -n "$out" ]]; then
+    printf '%s\n' "$out"
+  else
+    echo "(no log events)"
+  fi
+  printf '\n%slast %s events · sshfwd logs [HOST] [N] [--raw] · live: sshfwd follow%s\n' "$DIM" "$n" "$RST"
+}
+
+# follow [HOST]
+cmd_follow() {
+  color_setup
+  local h="${1:-}" f multi=0
+  [[ -z "$h" ]] || need_host "$h"
+  collect_logs "$h"
+  [[ ${#LOG_FILES[@]} -gt 0 ]] || die "no tunnels configured"
+  mkdir -p "$LOG_DIR"
+  for f in "${LOG_FILES[@]}"; do touch "$f"; done
+  [[ ${#LOG_FILES[@]} -gt 1 ]] && multi=1
+  cmd_ls
+  echo
+  printf '%sFollowing %s. Quiet while connected is normal; events appear on start, drop and reconnect. Ctrl-C to quit.%s\n' \
+    "$DIM" "$(echo ${LOG_HOSTS[@]})" "$RST"
+  trap 'printf "\n"; exit 0' INT TERM
+  tail -n 0 -F "${LOG_FILES[@]}" |
+    awk -v host="${LOG_HOSTS[0]}" -v stream=1 "$LOG_PARSE_AWK" |
+    render_events 0 "$multi" "$LOG_HW" 1
+}
+
+usage() {
+  color_setup
+  local B="$BOLD" D="$DIM" R="$RST" conf logd agent
+  conf="${CONF_DIR/#$HOME/~}"; logd="${LOG_DIR/#$HOME/~}"; agent="${AGENT_DIR/#$HOME/~}"
+  cat <<USAGE
+${B}sshfwd${R} — keep SSH port forwards running in the background (autossh + launchd)
+
+${B}USAGE${R}
+  sshfwd <command> [args]        ${D}HOST = an alias from ~/.ssh/config, e.g. sbms1${R}
+
+${B}FORWARDS${R}
+  add HOST [-R|-L] SPEC...       add forward(s) and (re)start HOST's tunnel
+  rm  HOST [-R|-L] PORT...       cancel forward(s) by their LISTEN port;
+                                 closes the tunnel when none are left
+  rm  HOST --all                 cancel HOST's whole tunnel and forget it
+
+${B}TUNNELS${R}
+  ls                             every forward, its state, and a local port check
+  status [HOST] [--check]        health, port checks, recent events;
+                                 --check also tests each port from the far end
+  start | stop | restart [HOST|--all]
+                                 stop keeps the config; running tunnels return at login
+  fg HOST                        run in this terminal instead (Ctrl-C stops)
+
+${B}LOGS${R}
+  logs [HOST] [N] [--raw]        last N events (default 30); all tunnels if HOST omitted
+  follow [HOST]                  stream new events live (Ctrl-C quits)
+
+${B}DIRECTION${R}  ${D}applies to every SPEC after it; default -R${R}
+  -R   HOST:LISTEN      ──▶  this Mac:TARGET     the service runs on your Mac
+  -L   this Mac:LISTEN  ──▶  HOST:TARGET         the service runs on HOST
+
+${B}SPEC${R}
+  PORT                 same port on both ends            3430
+  LISTEN:TARGET        different ports                   13425:3425
+  LISTEN:ADDR:TARGET   target another machine            8888:node12:8888
+                       ${D}ADDR is reached from the target end (HOST for -L, this Mac for -R)${R}
+
+${B}EXAMPLES${R}
+  sshfwd add sbms1 -R 13425:3425     ${D}# Magpie: sbms1:13425 → this Mac:3425${R}
+  sshfwd add sbms2 -L 8888           ${D}# this Mac:8888 → Jupyter on sbms2:8888${R}
+  sshfwd add sbms1 -L 3430 -R 9000   ${D}# several forwards, mixed directions${R}
+  sshfwd rm  sbms1 13425             ${D}# remove by LISTEN port (13425, not 3425)${R}
+  sshfwd rm  sbms2 --all             ${D}# close the sbms2 tunnel${R}
+  sshfwd logs sbms1 50               ${D}# last 50 events for sbms1${R}
+
+${B}FILES${R}
+  config   $conf/<host>.conf     ${D}lines: <L|R> <listen> <target_addr> <target_port>${R}
+  logs     $logd/<host>.log
+  agents   $agent/$LABEL_PREFIX.<host>.plist
+USAGE
+}
+
+cmd="${1:-}"
+[[ $# -gt 0 ]] && shift
+case "$cmd" in
+  ls|list) cmd_ls ;;
+  status|st) cmd_status "$@" ;;
+  add) cmd_add "$@" ;;
+  rm|remove|cancel) cmd_rm "$@" ;;
+  start|up) cmd_start "${1:-}" ;;
+  stop|down) cmd_stop "${1:-}" ;;
+  restart) cmd_start "${1:-}" ;;
+  fg|foreground) cmd_fg "${1:-}" ;;
+  run-agent) run_agent "${1:-}" ;;
+  logs|log) cmd_logs "$@" ;;
+  follow|tail) cmd_follow "${1:-}" ;;
+  ""|-h|--help|help) usage ;;
+  *) echo "sshfwd: unknown command: $cmd  (see: sshfwd help)" >&2; exit 1 ;;
+esac

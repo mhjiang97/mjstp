@@ -2,43 +2,33 @@
 # Dependencies: go
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
-[ -n "${LIB_DIR}" ] && source "${LIB_DIR}/utils.sh"
+source "${LIB_DIR:-${SCRIPT_DIR}/../../../lib}/utils.sh"
+init_local_env
 
-log_info "Installing Duf..."
+GO_BIN="${MJSTP_PREFIX}/bin/go"
+TARGET_BIN="${MJSTP_PREFIX}/bin/duf"
 
-if [ -x "$HOME/local/bin/duf" ]; then
-    if [ -n "$MJSTP_UPDATE" ]; then
-        log_info "Updating Duf..."
-        # fall through to build
-    else
-        log_info "Duf is already installed at $HOME/local/bin/duf."
-        exit 0
-    fi
-fi
-
-# Ensure Go is available
-export PATH="${HOME}/local/opt/go/bin:${PATH}"
-if ! command -v go &> /dev/null; then
-    log_warn "Go not found in path, trying to source profile."
-    # shellcheck disable=SC1090
-    [ -f "${MJSTP_PROFILE}" ] && source "${MJSTP_PROFILE}"
-fi
-
-if ! command -v go &> /dev/null; then
-    log_error "Go is required to build duf."
+if [ ! -x "${GO_BIN}" ]; then
+    log_error "Go not found at ${GO_BIN}."
     exit 1
 fi
 
-tmp_dir=$(mktemp -d)
-trap 'rm -rf "${tmp_dir}"' EXIT
-cd "${tmp_dir}" || exit 1
+TAG="$(github_latest_tag "muesli/duf")"
+VERSION="${TAG#v}"
 
-log_info "Cloning and building Duf..."
-git clone https://github.com/muesli/duf.git
-cd duf || exit 1
-go build
+if [ -x "${TARGET_BIN}" ]; then
+    CURRENT_VER="$("${TARGET_BIN}" --version 2>/dev/null | awk '{print $2}' | sed 's/^v//')"
+    if [ "${CURRENT_VER}" = "${VERSION}" ]; then
+        log_info "Duf ${VERSION} is already at the latest version."
+        exit 0
+    fi
+    log_info "Updating Duf (${CURRENT_VER:-unknown} -> ${VERSION})..."
+else
+    log_info "Installing Duf ${VERSION}..."
+fi
 
-ensure_dir "$HOME/local/bin"
-mv duf "$HOME/local/bin/duf"
-log_success "Duf installed/updated."
+GOBIN="${MJSTP_PREFIX}/bin" "${GO_BIN}" install "github.com/muesli/duf@${TAG}"
+
+log_success "Duf ${VERSION} installed to ${TARGET_BIN}."

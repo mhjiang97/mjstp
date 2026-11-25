@@ -2,49 +2,49 @@
 # Dependencies:
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
-[ -n "${LIB_DIR}" ] && source "${LIB_DIR}/utils.sh"
+source "${LIB_DIR:-${SCRIPT_DIR}/../../../lib}/utils.sh"
+init_local_env
 
-VERSION="1.24.2"
-OS="linux"
-ARCH="amd64"
-TARBALL="go${VERSION}.${OS}-${ARCH}.tar.gz"
+GO_ROOT="${MJSTP_PREFIX}/opt/go"
 
-if [ -d "$HOME/local/opt/go" ] && [ -x "$HOME/local/opt/go/bin/go" ]; then
-    if [ -n "${MJSTP_UPDATE}" ]; then
-        log_info "Updating Go to ${VERSION}..."
-        rm -rf "${HOME}/local/opt/go"
-    else
-        log_info "Go is already installed at $HOME/local/opt/go."
+GO_TAG="$(curl -fsSL "https://go.dev/VERSION?m=text" | head -n 1 | tr -d '[:space:]')"
+if [[ -z "${GO_TAG}" || "${GO_TAG}" != go* ]]; then
+    log_error "Failed to resolve latest Go version from go.dev."
+    exit 1
+fi
+VERSION="${GO_TAG#go}"
+
+if [ -x "${GO_ROOT}/bin/go" ]; then
+    ln -sf "${GO_ROOT}/bin/go" "${MJSTP_PREFIX}/bin/go"
+    ln -sf "${GO_ROOT}/bin/gofmt" "${MJSTP_PREFIX}/bin/gofmt"
+    CURRENT_TAG="$("${GO_ROOT}/bin/go" version | awk '{print $3}')"
+    if [ "${CURRENT_TAG}" = "${GO_TAG}" ]; then
+        log_info "Go ${VERSION} is already at the latest version."
         exit 0
     fi
+    log_info "Updating Go (${CURRENT_TAG#go} -> ${VERSION})..."
+else
+    log_info "Installing Go ${VERSION}..."
 fi
 
-log_info "Installing Go ${VERSION}..."
+TARBALL="${GO_TAG}.linux-amd64.tar.gz"
 
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "${tmp_dir}"' EXIT
 cd "${tmp_dir}" || exit 1
 
-log_info "Downloading Go ${VERSION}..."
+log_info "Downloading ${TARBALL}..."
 download "https://go.dev/dl/${TARBALL}"
 
-ensure_dir "${HOME}/local/opt"
-rm -rf "${HOME}/local/opt/go"
-ensure_dir "${HOME}/local/bin"
+mkdir -p "${tmp_dir}/extract"
+tar -C "${tmp_dir}/extract" -xzf "${TARBALL}"
 
-if tar -C "${HOME}/local/opt" -xzf "${TARBALL}"; then
-    ln -sf "${HOME}/local/opt/go/bin/go" "${HOME}/local/bin/go"
-    ln -sf "${HOME}/local/opt/go/bin/gofmt" "${HOME}/local/bin/gofmt"
-    log_success "Go ${VERSION} installed."
-else
-    log_error "Failed to extract Go."
-    exit 1
-fi
+rm -rf "${GO_ROOT}"
+mv "${tmp_dir}/extract/go" "${GO_ROOT}"
 
-if [ -n "${MJSTP_PROFILE}" ]; then
-    if ! line_in_file "export PATH=\$HOME/local/opt/go/bin:\$PATH" "${MJSTP_PROFILE}"; then
-        echo "export PATH=\$HOME/local/opt/go/bin:\$PATH" >> "${MJSTP_PROFILE}"
-        log_info "Added Go path to profile."
-    fi
-fi
+ln -sf "${GO_ROOT}/bin/go" "${MJSTP_PREFIX}/bin/go"
+ln -sf "${GO_ROOT}/bin/gofmt" "${MJSTP_PREFIX}/bin/gofmt"
+
+log_success "Go ${VERSION} installed to ${GO_ROOT}."

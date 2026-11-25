@@ -2,28 +2,26 @@
 # Dependencies: pipx
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
-[ -n "${LIB_DIR}" ] && source "${LIB_DIR}/utils.sh"
+source "${LIB_DIR:-${SCRIPT_DIR}/../../../lib}/utils.sh"
+init_local_env
 
-log_info "Installing Radian..."
+PIPX_BIN="${MJSTP_PREFIX}/bin/pipx"
+TARGET_BIN="${MJSTP_PREFIX}/bin/radian"
 
-export PATH="${HOME}/local/bin:${HOME}/local/opt/micromamba/bin:${HOME}/.local/bin:${PATH}"
-
-if [ -x "${HOME}/.local/bin/radian" ] || command -v radian &>/dev/null; then
-    if [ -n "${MJSTP_UPDATE}" ]; then
-        log_info "Updating Radian..."
-        pipx upgrade radian || true
-        exit 0
-    else
-        log_info "Radian is already installed."
-        exit 0
-    fi
-fi
-
-if command -v pipx &> /dev/null; then
-    pipx install radian
-    log_success "Radian installed."
-else
-    log_error "Pipx not found."
+if [ ! -x "${PIPX_BIN}" ]; then
+    log_error "pipx not found at ${PIPX_BIN}."
     exit 1
 fi
+
+if [ -x "${TARGET_BIN}" ] && [ -d "${PIPX_HOME}/venvs/radian" ]; then
+    log_info "Ensuring Radian is at the latest version..."
+    "${PIPX_BIN}" upgrade radian
+    log_success "Radian is up to date."
+    exit 0
+fi
+
+log_info "Installing Radian..."
+"${PIPX_BIN}" install --force radian
+log_success "Radian installed to ${TARGET_BIN}."

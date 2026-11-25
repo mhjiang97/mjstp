@@ -2,18 +2,26 @@
 # Dependencies: condax
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
-[ -n "${LIB_DIR}" ] && source "${LIB_DIR}/utils.sh"
+source "${LIB_DIR:-${SCRIPT_DIR}/../../../lib}/utils.sh"
+init_local_env
 
-if command -v git &>/dev/null; then
-    log_info "Git is already installed."
+CONDAX_BIN="${MJSTP_PREFIX}/bin/condax"
+TARGET_BIN="${MJSTP_PREFIX}/bin/git"
+
+if [ ! -x "${CONDAX_BIN}" ]; then
+    log_error "Condax not found at ${CONDAX_BIN}."
+    exit 1
+fi
+
+if [ -x "${TARGET_BIN}" ] && [ -d "${MJSTP_PREFIX}/opt/condax/git" ]; then
+    log_info "Ensuring Git is at the latest version..."
+    "${CONDAX_BIN}" update git
+    log_success "Git is up to date."
     exit 0
 fi
 
-log_info "Installing Git..."
-
-export PATH="${HOME}/local/bin:${HOME}/local/opt/micromamba/bin:${PATH}"
-
-condax install -c conda-forge git
-
-log_success "Git installed."
+log_info "Installing Git via Condax..."
+"${CONDAX_BIN}" install --force -c conda-forge git
+log_success "Git installed to ${TARGET_BIN}."

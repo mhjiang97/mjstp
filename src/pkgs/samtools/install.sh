@@ -1,26 +1,30 @@
 #!/usr/bin/env bash
-# Dependencies: htslib, ncurses
+# Dependencies: htslib, ncurses, zlib, bzip2, xz
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
-[ -n "${LIB_DIR}" ] && source "${LIB_DIR}/utils.sh"
+source "${LIB_DIR:-${SCRIPT_DIR}/../../../lib}/utils.sh"
+init_local_env
 
-VERSION="1.23"
-INSTALL_DIR="${HOME}/local"
+INSTALL_DIR="${MJSTP_PREFIX}"
+
+TAG="$(github_latest_tag "samtools/samtools")"
+VERSION="${TAG#v}"
 
 if [ -x "${INSTALL_DIR}/bin/samtools" ]; then
-    if [ -n "${MJSTP_UPDATE}" ]; then
-        log_info "Reinstalling samtools ${VERSION}..."
-    else
-        log_info "samtools ${VERSION} is already installed."
+    CURRENT_VER="$("${INSTALL_DIR}/bin/samtools" --version | head -n 1 | awk '{print $2}')"
+    if [ "${CURRENT_VER}" = "${VERSION}" ]; then
+        log_info "samtools ${VERSION} is already at the latest version."
         exit 0
     fi
+    log_info "Updating samtools (${CURRENT_VER:-unknown} -> ${VERSION})..."
+else
+    log_info "Installing samtools ${VERSION}..."
 fi
 
-log_info "Installing samtools ${VERSION}..."
-
 TARBALL="samtools-${VERSION}.tar.bz2"
-URL="https://github.com/samtools/samtools/releases/download/${VERSION}/${TARBALL}"
+URL="https://github.com/samtools/samtools/releases/download/${TAG}/${TARBALL}"
 
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "${tmp_dir}"' EXIT
@@ -34,8 +38,8 @@ tar xjf "${TARBALL}"
 cd "samtools-${VERSION}" || exit 1
 
 log_info "Configuring and building..."
-./configure --prefix="${INSTALL_DIR}"
-make -j"$(nproc 2>/dev/null || echo 1)"
+./configure --prefix="${INSTALL_DIR}" --with-htslib="${INSTALL_DIR}"
+make -j"$(cpu_jobs)"
 make install
 
 log_success "samtools ${VERSION} installed to ${INSTALL_DIR}."

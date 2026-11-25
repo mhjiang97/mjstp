@@ -2,29 +2,26 @@
 # Dependencies: pipx
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
-[ -n "${LIB_DIR}" ] && source "${LIB_DIR}/utils.sh"
+source "${LIB_DIR:-${SCRIPT_DIR}/../../../lib}/utils.sh"
+init_local_env
 
-export PATH="${HOME}/local/bin:${HOME}/local/opt/micromamba/bin:${HOME}/.local/bin:${PATH}"
+PIPX_BIN="${MJSTP_PREFIX}/bin/pipx"
+TARGET_BIN="${MJSTP_PREFIX}/bin/snakemake"
 
-if command -v snakemake &>/dev/null; then
-    if [ -n "${MJSTP_UPDATE}" ]; then
-        log_info "Updating Snakemake..."
-        pipx upgrade snakemake || true
-        exit 0
-    else
-        log_info "Snakemake is already installed."
-        exit 0
-    fi
-fi
-
-log_info "Installing Snakemake..."
-
-if ! command -v pipx &> /dev/null; then
-    log_error "pipx is required to install snakemake."
+if [ ! -x "${PIPX_BIN}" ]; then
+    log_error "pipx not found at ${PIPX_BIN}."
     exit 1
 fi
 
-pipx install snakemake
+if [ -x "${TARGET_BIN}" ] && [ -d "${PIPX_HOME}/venvs/snakemake" ]; then
+    log_info "Ensuring Snakemake is at the latest version..."
+    "${PIPX_BIN}" upgrade snakemake
+    log_success "Snakemake is up to date."
+    exit 0
+fi
 
-log_success "Snakemake installed."
+log_info "Installing Snakemake..."
+"${PIPX_BIN}" install --force snakemake
+log_success "Snakemake installed to ${TARGET_BIN}."

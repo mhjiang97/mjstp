@@ -1,31 +1,27 @@
 #!/usr/bin/env bash
+# Dependencies:
+# Platforms: darwin
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
-[ -n "${LIB_DIR}" ] && source "${LIB_DIR}/utils.sh"
+source "${LIB_DIR:-${SCRIPT_DIR}/../../../lib}/utils.sh"
+init_local_env
 
-INSTALL_DIR="${HOME}/local"
-PKG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SRC="${PKG_DIR}/sshfwd"
+INSTALL_DIR="${MJSTP_PREFIX}"
+SRC="${SCRIPT_DIR}/sshfwd"
 DEST="${INSTALL_DIR}/bin/sshfwd"
 
-# Platforms: darwin
 # sshfwd drives launchd LaunchAgents and Homebrew's autossh — macOS only.
-# The header above exempts it from the Linux x86_64 system check.
+# The "# Platforms: darwin" header above exempts it from the Linux x86_64 system check.
 if [[ "$(uname -s)" != "Darwin" ]]; then
     log_warn "sshfwd requires macOS (launchd + autossh). Skipping."
     exit 0
 fi
 
-if [ -x "${DEST}" ]; then
-    if cmp -s "${SRC}" "${DEST}"; then
-        log_info "sshfwd is already installed and up to date."
-        exit 0
-    elif [ -z "${MJSTP_UPDATE}" ]; then
-        log_warn "${DEST} differs from ${SRC}; run with --update to overwrite."
-        exit 0
-    fi
-    log_info "Reinstalling sshfwd..."
+if [ -x "${DEST}" ] && cmp -s "${SRC}" "${DEST}"; then
+    log_info "sshfwd is already at the latest version."
+    exit 0
 fi
 
 if ! command -v autossh >/dev/null 2>&1; then

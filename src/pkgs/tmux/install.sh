@@ -2,22 +2,26 @@
 # Dependencies: condax
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
-[ -n "${LIB_DIR}" ] && source "${LIB_DIR}/utils.sh"
+source "${LIB_DIR:-${SCRIPT_DIR}/../../../lib}/utils.sh"
+init_local_env
 
-log_info "Installing Tmux via Condax..."
+CONDAX_BIN="${MJSTP_PREFIX}/bin/condax"
+TARGET_BIN="${MJSTP_PREFIX}/bin/tmux"
 
-export PATH="${HOME}/local/bin:${HOME}/local/opt/micromamba/bin:${PATH}"
+if [ ! -x "${CONDAX_BIN}" ]; then
+    log_error "Condax not found at ${CONDAX_BIN}."
+    exit 1
+fi
 
-if [ -x "${HOME}/local/opt/micromamba/bin/tmux" ]; then
-    log_info "Tmux is already installed."
+if [ -x "${TARGET_BIN}" ] && [ -d "${MJSTP_PREFIX}/opt/condax/tmux" ]; then
+    log_info "Ensuring Tmux is at the latest version..."
+    "${CONDAX_BIN}" update tmux
+    log_success "Tmux is up to date."
     exit 0
 fi
 
-if command -v condax &> /dev/null; then
-    condax install -c conda-forge tmux
-    log_success "Tmux installed."
-else
-    log_error "Condax not found."
-    exit 1
-fi
+log_info "Installing Tmux via Condax..."
+"${CONDAX_BIN}" install --force -c conda-forge tmux
+log_success "Tmux installed to ${TARGET_BIN}."

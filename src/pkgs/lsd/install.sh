@@ -2,32 +2,19 @@
 # Dependencies: rust
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
-[ -n "${LIB_DIR}" ] && source "${LIB_DIR}/utils.sh"
+source "${LIB_DIR:-${SCRIPT_DIR}/../../../lib}/utils.sh"
+init_local_env
 
-if [ -f "${HOME}/.cargo/env" ]; then
-    # shellcheck disable=SC1091
-    source "${HOME}/.cargo/env"
-fi
+CARGO_BIN="${CARGO_HOME}/bin/cargo"
+TARGET_BIN="${MJSTP_PREFIX}/bin/lsd"
 
-if ! command -v cargo &>/dev/null; then
-    log_error "Cargo not found. Rust installation might have failed."
+if [ ! -x "${CARGO_BIN}" ]; then
+    log_error "Cargo not found at ${CARGO_BIN}."
     exit 1
 fi
 
-if command -v lsd &>/dev/null; then
-    if [ -n "${MJSTP_UPDATE}" ]; then
-        log_info "Updating lsd..."
-        cargo install lsd --locked --force
-        exit 0
-    else
-        log_info "lsd is already installed."
-        exit 0
-    fi
-fi
-
-log_info "Installing lsd..."
-
-cargo install lsd --locked
-
-log_success "lsd installed."
+log_info "Ensuring lsd is at the latest version in ${MJSTP_PREFIX}/bin..."
+"${CARGO_BIN}" install lsd --locked --root "${MJSTP_PREFIX}"
+log_success "lsd is at the latest version in ${TARGET_BIN}."

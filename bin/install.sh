@@ -11,6 +11,21 @@ LIB_DIR="${ROOT_DIR}/lib"
 # shellcheck disable=SC1091
 source "${LIB_DIR}/utils.sh"
 
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") [OPTIONS] [PACKAGE...]
+
+Install or upgrade user-space packages to their latest versions in \${MJSTP_PREFIX:-~/local} (no sudo required).
+
+Options:
+  -u, --update         Alias for default behavior (always installs/upgrades to latest)
+  -e, --exclude PKG    Exclude package (and any packages depending on it)
+  -n, --dry-run        Preview resolved dependency install order without installing
+  -l, --log            Tee install output to ~/.mjstp_install.log
+  -h, --help           Show this help message
+EOF
+}
+
 # Parse arguments early (before system check so --dry-run can skip it)
 TARGETS=()
 EXCLUDES=()
@@ -22,25 +37,38 @@ while [[ $# -gt 0 ]]; do
     key="$1"
     case $key in
         -u|--update)
-        export MJSTP_UPDATE="true"
-        shift
-        ;;
+            export MJSTP_UPDATE="true"
+            shift
+            ;;
         -e|--exclude)
-        EXCLUDES+=("$2")
-        shift; shift
-        ;;
+            if [[ $# -lt 2 || -z "$2" ]]; then
+                log_error "--exclude requires a package name."
+                exit 1
+            fi
+            EXCLUDES+=("$2")
+            shift 2
+            ;;
         -n|--dry-run)
-        DRY_RUN="true"
-        shift
-        ;;
+            DRY_RUN="true"
+            shift
+            ;;
         -l|--log)
-        LOG_FILE="${HOME}/.mjstp_install.log"
-        shift
-        ;;
+            LOG_FILE="${HOME}/.mjstp_install.log"
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -*)
+            log_error "Unknown option: $1"
+            usage >&2
+            exit 1
+            ;;
         *)
-        TARGETS+=("$1")
-        shift
-        ;;
+            TARGETS+=("$1")
+            shift
+            ;;
     esac
 done
 
@@ -51,45 +79,89 @@ if [[ -n "${LOG_FILE}" ]]; then
     echo "--- MJSTP install started at $(date) ---" >> "${LOG_FILE}"
 fi
 
-# Dependency and traversal state. Bash 3.2 (the macOS /bin/bash) has no
-# associative arrays, so entries live in variables named <map>__<key>.
+# Dependency and traversal state. Bash 3.2 (macOS /bin/bash) has no
+# associative arrays, so entries live in variables named <map>__<sanitized_key>.
+_map_key() {
+    printf '%s__%s' "$1" "${2//[^a-zA-Z0-9_]/_}"
+}
+
 map_set() {
-    printf -v "${1}__${2}" '%s' "$3"
+    local _var
+    _var="$(_map_key "$1" "$2")"
+    printf -v "${_var}" '%s' "$3"
 }
 
 map_get() {
-    local _var="${1}__${2}"
-    printf '%s' "${!_var}"
+    local _var
+    _var="$(_map_key "$1" "$2")"
+    printf '%s' "${!_var:-}"
 }
 
 map_unset() {
-    unset "${1}__${2}"
+    local _var
+    _var="$(_map_key "$1" "$2")"
+    unset "${_var}"
 }
 
-# Discover packages and dependencies
+is_excluded() {
+    local needle="$1" ex
+    for ex in "${EXCLUDES[@]}"; do
+        if [[ "$needle" == "$ex" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+pkg_exists() {
+    local needle="$1" p
+    for p in "${PACKAGES[@]}"; do
+        if [[ "$p" == "$needle" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Discover packages and dependencies in deterministic alphabetical order
 log_info "Discovering packages in ${SRC_DIR}..."
-PACKAGES=()
+RAW_PKGS=()
 while IFS= read -r -d '' pkg_path; do
     pkg_name=$(basename "$(dirname "${pkg_path}")")
-    PACKAGES+=("${pkg_name}")
+    RAW_PKGS+=("${pkg_name}")
 
-    # Extract Dependencies line
     # Format: # Dependencies: foo, bar
-    dep_line=$(grep -i "^# Dependencies:" "${pkg_path}" | sed 's/# Dependencies://i' | tr -d ' ')
-
+    dep_line=$(grep -i -m1 "^# Dependencies:" "${pkg_path}" | sed 's/# Dependencies://i' | tr -d ' ' || true)
     if [[ -n "${dep_line}" ]]; then
         map_set DEPS "${pkg_name}" "${dep_line}"
     fi
-done < <(find "${SRC_DIR}" -name "install.sh" -print0)
+done < <(find "${SRC_DIR}" -mindepth 2 -maxdepth 2 -name "install.sh" -print0)
 
-# Sort dependencies (DFS)
+PACKAGES=()
+while IFS= read -r p; do
+    [[ -n "$p" ]] && PACKAGES+=("$p")
+done < <(printf '%s\n' "${RAW_PKGS[@]}" | LC_ALL=C sort)
+
+if [[ ${#EXCLUDES[@]} -gt 0 ]]; then
+    log_info "Excluding: ${EXCLUDES[*]}"
+fi
+
+# Sort dependencies (DFS). Returns 1 if pkg or any dependency is excluded.
 ORDERED_PKGS=()
 
 resolve_deps() {
-    local pkg=$1
+    local pkg="$1"
+
+    if is_excluded "${pkg}"; then
+        return 1
+    fi
+
+    if [[ "$(map_get SKIPPED "${pkg}")" == "1" ]]; then
+        return 1
+    fi
 
     if [[ "$(map_get VISITED "${pkg}")" == "1" ]]; then
-        return
+        return 0
     fi
 
     if [[ "$(map_get INSTALLING "${pkg}")" == "1" ]]; then
@@ -99,28 +171,30 @@ resolve_deps() {
 
     map_set INSTALLING "${pkg}" 1
 
-    # Split dependencies by comma
-    local pkg_deps
+    local pkg_deps dep
     pkg_deps=$(map_get DEPS "${pkg}")
     if [[ -n "${pkg_deps}" ]]; then
         IFS=',' read -ra ADDR <<< "${pkg_deps}"
         for dep in "${ADDR[@]}"; do
-            # Trim whitespace
             dep=$(echo "$dep" | xargs)
+            [[ -z "$dep" ]] && continue
 
-            # Check if dep exists in our package list
-            local exists=0
-            for p in "${PACKAGES[@]}"; do
-                if [[ "$p" == "$dep" ]]; then
-                    exists=1
-                    break
+            if is_excluded "$dep"; then
+                log_warn "Skipping '${pkg}' because dependency '${dep}' is excluded."
+                map_unset INSTALLING "${pkg}"
+                map_set SKIPPED "${pkg}" 1
+                return 1
+            fi
+
+            if pkg_exists "$dep"; then
+                if ! resolve_deps "$dep"; then
+                    log_warn "Skipping '${pkg}' because dependency '${dep}' was skipped."
+                    map_unset INSTALLING "${pkg}"
+                    map_set SKIPPED "${pkg}" 1
+                    return 1
                 fi
-            done
-
-            if [[ "$exists" == "1" ]]; then
-                resolve_deps "$dep"
             else
-                log_warn "Package '$pkg' depends on '$dep' which was not found in src/pkgs/. Assuming pre-installed or typo."
+                log_warn "Package '$pkg' depends on '$dep' which was not found in src/pkgs/. Assuming pre-installed."
             fi
         done
     fi
@@ -128,51 +202,22 @@ resolve_deps() {
     map_set VISITED "${pkg}" 1
     map_unset INSTALLING "${pkg}"
     ORDERED_PKGS+=("${pkg}")
+    return 0
 }
 
 if [[ ${#TARGETS[@]} -eq 0 ]]; then
     TARGETS=("${PACKAGES[@]}")
 fi
 
-# Filter out excluded packages
-if [[ ${#EXCLUDES[@]} -gt 0 ]]; then
-    FILTERED=()
-    for pkg in "${TARGETS[@]}"; do
-        excluded=0
-        for ex in "${EXCLUDES[@]}"; do
-            if [[ "$pkg" == "$ex" ]]; then
-                excluded=1
-                break
-            fi
-        done
-        if [[ "$excluded" == "0" ]]; then
-            FILTERED+=("$pkg")
-        fi
-    done
-    TARGETS=("${FILTERED[@]}")
-    log_info "Excluding: ${EXCLUDES[*]}"
-fi
-
 log_info "Resolving dependencies..."
 for target in "${TARGETS[@]}"; do
-    # Verify target exists
-    found=0
-    for p in "${PACKAGES[@]}"; do
-        if [[ "$p" == "$target" ]]; then
-            found=1
-            break
-        fi
-    done
-
-    if [[ "$found" == "1" ]]; then
-        resolve_deps "${target}"
-    else
+    if ! pkg_exists "$target"; then
         log_error "Package '$target' not found."
         exit 1
     fi
+    resolve_deps "${target}" || true
 done
 
-# Execute Installs
 log_info "Installation order: ${ORDERED_PKGS[*]}"
 
 # Dry-run mode: just print the order and exit
@@ -189,8 +234,7 @@ if [[ -n "${DRY_RUN}" ]]; then
     exit 0
 fi
 
-# Check system compat against the packages that will actually run.
-# Packages with a non-default "# Platforms:" header are exempt.
+# Check system compatibility against the packages that will actually run.
 install_scripts=()
 for pkg in "${ORDERED_PKGS[@]}"; do
     install_scripts+=("${SRC_DIR}/${pkg}/install.sh")
@@ -200,60 +244,74 @@ if [[ ${#install_scripts[@]} -gt 0 ]] && ! check_system "${install_scripts[@]}";
     exit 1
 fi
 
-# Create a common profile file if it doesn't exist
-PROFILE_FILE="$HOME/.mjstp_profile"
-# Use utils helpers correctly
+# Initialize ~/local FHS structure and environment
+init_local_env
+
+# Create/update common profile file
+PROFILE_FILE="${HOME}/.mjstp_profile"
 if [[ ! -f "$PROFILE_FILE" ]]; then
     touch "$PROFILE_FILE"
     log_info "Created profile file at ${PROFILE_FILE}"
 fi
 
-# Source profile from .bashrc and .zshrc
-for rc_file in "$HOME/.bashrc" "$HOME/.zshrc"; do
-    if [[ -f "$rc_file" ]] && ! line_in_file "source \"${PROFILE_FILE}\"" "$rc_file"; then
+ensure_profile_line() {
+    local marker="$1" line="$2"
+    if ! line_in_file "$marker" "${PROFILE_FILE}"; then
+        printf '%s\n' "$line" >> "${PROFILE_FILE}"
+    fi
+}
+
+# shellcheck disable=SC2016
+{
+    ensure_profile_line 'export MJSTP_PREFIX=' 'export MJSTP_PREFIX="${MJSTP_PREFIX:-${HOME}/local}"'
+    ensure_profile_line 'MJSTP_PREFIX}/bin' 'export PATH="${MJSTP_PREFIX}/bin:${MJSTP_PREFIX}/opt/go/bin:${MJSTP_PREFIX}/opt/cargo/bin:${PATH}"'
+    ensure_profile_line 'export MANPATH=' 'export MANPATH="${MJSTP_PREFIX}/share/man:${MANPATH:-}"'
+    ensure_profile_line 'export CPPFLAGS=' 'export CPPFLAGS="-I${MJSTP_PREFIX}/include -I${MJSTP_PREFIX}/include/ncursesw"'
+    ensure_profile_line 'export CFLAGS=' 'export CFLAGS="-O2 -I${MJSTP_PREFIX}/include -I${MJSTP_PREFIX}/include/ncursesw"'
+    ensure_profile_line 'export LDFLAGS=' 'export LDFLAGS="-L${MJSTP_PREFIX}/lib64 -L${MJSTP_PREFIX}/lib -Wl,-rpath,${MJSTP_PREFIX}/lib64 -Wl,-rpath,${MJSTP_PREFIX}/lib"'
+    ensure_profile_line 'export PKG_CONFIG_PATH=' 'export PKG_CONFIG_PATH="${MJSTP_PREFIX}/lib/pkgconfig:${MJSTP_PREFIX}/lib64/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"'
+    ensure_profile_line 'export MAMBA_ROOT_PREFIX=' 'export MAMBA_ROOT_PREFIX="${MJSTP_PREFIX}/opt/micromamba"'
+    ensure_profile_line 'export CONDAXRC=' 'export CONDAXRC="${MJSTP_PREFIX}/etc/condaxrc"'
+    ensure_profile_line 'export PIPX_HOME=' 'export PIPX_HOME="${MJSTP_PREFIX}/opt/pipx"'
+    ensure_profile_line 'export PIPX_BIN_DIR=' 'export PIPX_BIN_DIR="${MJSTP_PREFIX}/bin"'
+    ensure_profile_line 'export PIPX_MAN_DIR=' 'export PIPX_MAN_DIR="${MJSTP_PREFIX}/share/man"'
+    ensure_profile_line 'export GOPATH=' 'export GOPATH="${MJSTP_PREFIX}/opt/gopath"'
+    ensure_profile_line 'export GOBIN=' 'export GOBIN="${MJSTP_PREFIX}/bin"'
+    ensure_profile_line 'export CARGO_HOME=' 'export CARGO_HOME="${MJSTP_PREFIX}/opt/cargo"'
+    ensure_profile_line 'export RUSTUP_HOME=' 'export RUSTUP_HOME="${MJSTP_PREFIX}/opt/rustup"'
+}
+
+# Ensure ~/.bashrc exists on minimal Linux servers and source ~/.mjstp_profile
+# across interactive and SSH login shells.
+[[ -f "${HOME}/.bashrc" ]] || touch "${HOME}/.bashrc"
+
+source_snippet="if [ -f \"${PROFILE_FILE}\" ]; then . \"${PROFILE_FILE}\"; fi"
+rc_targets=("${HOME}/.bashrc")
+if [[ -f "${HOME}/.bash_profile" ]]; then
+    rc_targets+=("${HOME}/.bash_profile")
+elif [[ -f "${HOME}/.profile" ]]; then
+    rc_targets+=("${HOME}/.profile")
+else
+    touch "${HOME}/.profile"
+    rc_targets+=("${HOME}/.profile")
+fi
+[[ -f "${HOME}/.zshrc" ]] && rc_targets+=("${HOME}/.zshrc")
+
+for rc_file in "${rc_targets[@]}"; do
+    if ! line_in_file "${PROFILE_FILE}" "$rc_file"; then
         {
             echo ""
             echo "# MJSTP Profile"
-            echo "if [ -f \"${PROFILE_FILE}\" ]; then source \"${PROFILE_FILE}\"; fi"
+            echo "${source_snippet}"
         } >> "$rc_file"
         log_success "Added sourcing of ${PROFILE_FILE} to $(basename "$rc_file")"
     fi
 done
 
-# Ensure basic paths are in profile
-if ! grep -q "local/bin" "${PROFILE_FILE}"; then
-    # shellcheck disable=SC2016
-    echo 'export PATH="${HOME}/local/bin:$PATH"' >> "${PROFILE_FILE}"
-    log_info "Added local bin to profile PATH."
-fi
-
-# Ensure ~/.local/bin is in PATH
-if ! grep -q "/.local/bin" "${PROFILE_FILE}"; then
-    # shellcheck disable=SC2016
-    echo 'export PATH="${HOME}/.local/bin:$PATH"' >> "${PROFILE_FILE}"
-    log_info "Added .local bin to profile PATH."
-fi
-
-if ! grep -q "CFLAGS" "${PROFILE_FILE}"; then
-    # shellcheck disable=SC2016
-    echo 'export CFLAGS="-I${HOME}/local/include"' >> "${PROFILE_FILE}"
-    log_info "Added CFLAGS to profile."
-fi
-
-if ! grep -q "LDFLAGS" "${PROFILE_FILE}"; then
-    # shellcheck disable=SC2016
-    echo 'export LDFLAGS="-L${HOME}/local/lib64 -L${HOME}/local/lib"' >> "${PROFILE_FILE}"
-    log_info "Added LDFLAGS to profile."
-fi
-
 # Export variables for child scripts
 export MJSTP_ROOT="${ROOT_DIR}"
 export MJSTP_PROFILE="${PROFILE_FILE}"
 export LIB_DIR="${LIB_DIR}"
-export PATH="${HOME}/local/bin:${HOME}/local/opt/micromamba/bin:${PATH}"
-export MAMBA_ROOT_PREFIX="${HOME}/local/opt/micromamba"
-export CFLAGS="-I${HOME}/local/include"
-export LDFLAGS="-L${HOME}/local/lib64 -L${HOME}/local/lib"
 
 for pkg in "${ORDERED_PKGS[@]}"; do
     log_info "Installing ${pkg}..."

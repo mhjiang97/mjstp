@@ -2,29 +2,26 @@
 # Dependencies: pipx
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
-[ -n "${LIB_DIR}" ] && source "${LIB_DIR}/utils.sh"
+source "${LIB_DIR:-${SCRIPT_DIR}/../../../lib}/utils.sh"
+init_local_env
 
-log_info "Installing uv..."
+PIPX_BIN="${MJSTP_PREFIX}/bin/pipx"
+TARGET_BIN="${MJSTP_PREFIX}/bin/uv"
 
-export PATH="${HOME}/local/bin:${HOME}/local/opt/micromamba/bin:${HOME}/.local/bin:${PATH}"
-
-if command -v uv &> /dev/null || [ -x "$HOME/.local/bin/uv" ]; then
-    if [ -n "$MJSTP_UPDATE" ]; then
-        log_info "Updating uv..."
-        pipx upgrade uv || true
-        exit 0
-    else
-        log_info "uv is already installed."
-        exit 0
-    fi
-fi
-
-if ! command -v pipx &> /dev/null; then
-    log_error "pipx is required to install uv."
+if [ ! -x "${PIPX_BIN}" ]; then
+    log_error "pipx not found at ${PIPX_BIN}."
     exit 1
 fi
 
-pipx install uv
+if [ -x "${TARGET_BIN}" ] && [ -d "${PIPX_HOME}/venvs/uv" ]; then
+    log_info "Ensuring uv is at the latest version..."
+    "${PIPX_BIN}" upgrade uv
+    log_success "uv is up to date."
+    exit 0
+fi
 
-log_success "uv installed."
+log_info "Installing uv..."
+"${PIPX_BIN}" install --force uv
+log_success "uv installed to ${TARGET_BIN}."

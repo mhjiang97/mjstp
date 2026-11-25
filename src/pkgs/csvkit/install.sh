@@ -2,29 +2,26 @@
 # Dependencies: pipx
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
-[ -n "${LIB_DIR}" ] && source "${LIB_DIR}/utils.sh"
+source "${LIB_DIR:-${SCRIPT_DIR}/../../../lib}/utils.sh"
+init_local_env
 
-log_info "Installing csvkit..."
+PIPX_BIN="${MJSTP_PREFIX}/bin/pipx"
+TARGET_BIN="${MJSTP_PREFIX}/bin/csvcut"
 
-export PATH="${HOME}/local/bin:${HOME}/local/opt/micromamba/bin:${HOME}/.local/bin:${PATH}"
-
-if command -v csvcut &> /dev/null || [ -x "$HOME/.local/bin/csvcut" ]; then
-    if [ -n "$MJSTP_UPDATE" ]; then
-        log_info "Updating csvkit..."
-        pipx upgrade csvkit || true
-        exit 0
-    else
-        log_info "csvkit is already installed."
-        exit 0
-    fi
-fi
-
-if ! command -v pipx &> /dev/null; then
-    log_error "pipx is required to install csvkit."
+if [ ! -x "${PIPX_BIN}" ]; then
+    log_error "pipx not found at ${PIPX_BIN}."
     exit 1
 fi
 
-pipx install csvkit
+if [ -x "${TARGET_BIN}" ] && [ -d "${PIPX_HOME}/venvs/csvkit" ]; then
+    log_info "Ensuring csvkit is at the latest version..."
+    "${PIPX_BIN}" upgrade csvkit
+    log_success "csvkit is up to date."
+    exit 0
+fi
 
-log_success "csvkit installed."
+log_info "Installing csvkit..."
+"${PIPX_BIN}" install --force csvkit
+log_success "csvkit installed to ${MJSTP_PREFIX}/bin."

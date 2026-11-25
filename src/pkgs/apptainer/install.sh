@@ -2,22 +2,26 @@
 # Dependencies: condax
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
-[ -n "${LIB_DIR}" ] && source "${LIB_DIR}/utils.sh"
+source "${LIB_DIR:-${SCRIPT_DIR}/../../../lib}/utils.sh"
+init_local_env
 
-log_info "Installing Apptainer via Condax..."
+CONDAX_BIN="${MJSTP_PREFIX}/bin/condax"
+TARGET_BIN="${MJSTP_PREFIX}/bin/apptainer"
 
-export PATH="${HOME}/local/bin:${HOME}/local/opt/micromamba/bin:${PATH}"
+if [ ! -x "${CONDAX_BIN}" ]; then
+    log_error "Condax not found at ${CONDAX_BIN}."
+    exit 1
+fi
 
-if [ -x "${HOME}/local/opt/micromamba/bin/apptainer" ]; then
-    log_info "Apptainer is already installed."
+if [ -x "${TARGET_BIN}" ] && [ -d "${MJSTP_PREFIX}/opt/condax/apptainer" ]; then
+    log_info "Ensuring Apptainer is at the latest version..."
+    "${CONDAX_BIN}" update apptainer
+    log_success "Apptainer is up to date."
     exit 0
 fi
 
-if command -v condax &> /dev/null; then
-    condax install apptainer
-    log_success "Apptainer installed."
-else
-    log_error "Condax not found."
-    exit 1
-fi
+log_info "Installing Apptainer via Condax..."
+"${CONDAX_BIN}" install --force -c conda-forge apptainer
+log_success "Apptainer installed to ${TARGET_BIN}."

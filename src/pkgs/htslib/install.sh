@@ -1,27 +1,30 @@
 #!/usr/bin/env bash
-# Dependencies:
+# Dependencies: zlib, bzip2, xz
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
-[ -n "${LIB_DIR}" ] && source "${LIB_DIR}/utils.sh"
+source "${LIB_DIR:-${SCRIPT_DIR}/../../../lib}/utils.sh"
+init_local_env
 
-VERSION="1.23"
-INSTALL_DIR="${HOME}/local"
+INSTALL_DIR="${MJSTP_PREFIX}"
 
-# Check existing installation
+TAG="$(github_latest_tag "samtools/htslib")"
+VERSION="${TAG#v}"
+
 if [ -x "${INSTALL_DIR}/bin/htsfile" ]; then
-    if [ -n "${MJSTP_UPDATE}" ]; then
-        log_info "Reinstalling htslib ${VERSION}..."
-    else
-        log_info "htslib ${VERSION} is already installed at ${INSTALL_DIR}."
+    CURRENT_VER="$("${INSTALL_DIR}/bin/htsfile" --version | head -n 1 | awk '{print $NF}')"
+    if [ "${CURRENT_VER}" = "${VERSION}" ]; then
+        log_info "htslib ${VERSION} is already at the latest version."
         exit 0
     fi
+    log_info "Updating htslib (${CURRENT_VER:-unknown} -> ${VERSION})..."
+else
+    log_info "Installing htslib ${VERSION}..."
 fi
 
-log_info "Installing htslib ${VERSION}..."
-
 TARBALL="htslib-${VERSION}.tar.bz2"
-URL="https://github.com/samtools/htslib/releases/download/${VERSION}/${TARBALL}"
+URL="https://github.com/samtools/htslib/releases/download/${TAG}/${TARBALL}"
 
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "${tmp_dir}"' EXIT
@@ -36,14 +39,7 @@ cd "htslib-${VERSION}" || exit 1
 
 log_info "Configuring and building..."
 ./configure --prefix="${INSTALL_DIR}"
-make -j"$(nproc 2>/dev/null || echo 1)"
+make -j"$(cpu_jobs)"
 make install
 
 log_success "htslib ${VERSION} installed to ${INSTALL_DIR}."
-
-if [ -n "${MJSTP_PROFILE}" ]; then
-    if ! line_in_file "export PATH=\$HOME/local/bin:\$PATH" "${MJSTP_PROFILE}"; then
-        echo "export PATH=\$HOME/local/bin:\$PATH" >> "${MJSTP_PROFILE}"
-        log_info "Added ~/local/bin to PATH in profile."
-    fi
-fi

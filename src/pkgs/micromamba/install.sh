@@ -2,35 +2,62 @@
 # Dependencies:
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
-[ -n "${LIB_DIR}" ] && source "${LIB_DIR}/utils.sh"
+source "${LIB_DIR:-${SCRIPT_DIR}/../../../lib}/utils.sh"
+init_local_env
 
-# Ensure local directories exist
-ensure_dir "${HOME}/local/bin"
-ensure_dir "${HOME}/local/opt"
+MAMBA_BIN="${MJSTP_PREFIX}/bin/micromamba"
+MAMBA_RC="${MAMBA_ROOT_PREFIX}/.mambarc"
 
-# Check if micromamba binary exists (standard install location or our custom one if we had one)
-if [ -x "${HOME}/local/bin/micromamba" ] || [ -d "${HOME}/local/opt/micromamba" ]; then
-    log_info "Micromamba appears to be installed."
-    exit 0
+ensure_mamba_config() {
+    ensure_dir "${MAMBA_ROOT_PREFIX}"
+    if [ ! -f "${MAMBA_RC}" ]; then
+        cat > "${MAMBA_RC}" <<EOF
+channels:
+  - conda-forge
+  - nodefaults
+channel_priority: strict
+EOF
+    fi
+    if [ -n "${MJSTP_PROFILE:-}" ] && ! line_in_file "micromamba shell hook" "${MJSTP_PROFILE}"; then
+        # shellcheck disable=SC2016
+        cat >> "${MJSTP_PROFILE}" <<'EOF'
+if [ -x "${MJSTP_PREFIX}/bin/micromamba" ]; then
+    if [ -n "${BASH_VERSION:-}" ]; then
+        eval "$("${MJSTP_PREFIX}/bin/micromamba" shell hook --shell bash --root-prefix "${MAMBA_ROOT_PREFIX}" 2>/dev/null)" || true
+    elif [ -n "${ZSH_VERSION:-}" ]; then
+        eval "$("${MJSTP_PREFIX}/bin/micromamba" shell hook --shell zsh --root-prefix "${MAMBA_ROOT_PREFIX}" 2>/dev/null)" || true
+    fi
 fi
+EOF
+        log_info "Added micromamba shell hook to profile."
+    fi
+}
 
-log_info "Installing Micromamba..."
+TAG="$(github_latest_tag "mamba-org/micromamba-releases")"
+# Tag format is e.g. "2.10.0-0"; binary --version outputs "2.10.0"
+LATEST_VER="${TAG%-*}"
+
+if [ -x "${MAMBA_BIN}" ]; then
+    CURRENT_VER="$("${MAMBA_BIN}" --version | head -n 1 | tr -d '[:space:]')"
+    if [ "${CURRENT_VER}" = "${LATEST_VER}" ]; then
+        ensure_mamba_config
+        log_info "Micromamba ${CURRENT_VER} is already at the latest version."
+        exit 0
+    fi
+    log_info "Updating Micromamba (${CURRENT_VER:-unknown} -> ${LATEST_VER})..."
+else
+    log_info "Installing Micromamba ${LATEST_VER}..."
+fi
 
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "${tmp_dir}"' EXIT
-cd "${tmp_dir}" || exit 1
 
-# Run installer non-interactively
-# INIT_YES=yes runs 'micromamba shell init'
-# CONDA_FORGE_YES=yes adds conda-forge
-export INIT_YES=yes
-export CONDA_FORGE_YES=yes
-export PREFIX_LOCATION="${HOME}/local/opt/micromamba"
-export BIN_FOLDER="${HOME}/local/bin"
+URL="https://github.com/mamba-org/micromamba-releases/releases/download/${TAG}/micromamba-linux-64"
+download "${URL}" "${tmp_dir}/micromamba"
+chmod 755 "${tmp_dir}/micromamba"
+mv "${tmp_dir}/micromamba" "${MAMBA_BIN}"
 
-# Download installer to temp file instead of piping to shell
-download "https://micro.mamba.pm/install.sh" "${tmp_dir}/install.sh"
-bash "${tmp_dir}/install.sh"
-
-log_success "Micromamba installed."
+ensure_mamba_config
+log_success "Micromamba ${LATEST_VER} installed to ${MAMBA_BIN}."

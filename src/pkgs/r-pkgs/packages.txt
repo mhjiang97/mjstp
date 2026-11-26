@@ -1,0 +1,7 @@
+# R CRAN package manifest
+# Format: <package_name>
+
+languageserver
+lintr
+data.table
+BiocManager

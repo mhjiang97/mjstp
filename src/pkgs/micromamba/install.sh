@@ -20,7 +20,7 @@ channels:
 channel_priority: strict
 EOF
     fi
-    if [ -n "${MJSTP_PROFILE:-}" ] && ! line_in_file "micromamba shell hook" "${MJSTP_PROFILE}"; then
+    if [ -n "${MJSTP_PROFILE:-}" ] && ! line_in_file "shell hook --shell bash --root-prefix" "${MJSTP_PROFILE}"; then
         # shellcheck disable=SC2016
         cat >> "${MJSTP_PROFILE}" <<'EOF'
 if [ -x "${MJSTP_PREFIX}/bin/micromamba" ]; then

@@ -21,6 +21,7 @@ Options:
   -u, --update         Alias for default behavior (always installs/upgrades to latest)
   -e, --exclude PKG    Exclude package (and any packages depending on it)
   -n, --dry-run        Preview resolved dependency install order without installing
+  -k, --keep-going     Continue installing remaining packages if one fails
   -l, --log            Tee install output to ~/.mjstp_install.log
   -h, --help           Show this help message
 EOF
@@ -31,6 +32,7 @@ TARGETS=()
 EXCLUDES=()
 export MJSTP_UPDATE=""
 DRY_RUN=""
+KEEP_GOING=""
 LOG_FILE=""
 
 while [[ $# -gt 0 ]]; do
@@ -50,6 +52,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -n|--dry-run)
             DRY_RUN="true"
+            shift
+            ;;
+        -k|--keep-going)
+            KEEP_GOING="true"
             shift
             ;;
         -l|--log)
@@ -321,6 +327,9 @@ export MJSTP_ROOT="${ROOT_DIR}"
 export MJSTP_PROFILE="${PROFILE_FILE}"
 export LIB_DIR="${LIB_DIR}"
 
+SUCCEEDED_PKGS=()
+FAILED_PKGS=()
+
 for pkg in "${ORDERED_PKGS[@]}"; do
     log_info "Installing ${pkg}..."
 
@@ -328,10 +337,21 @@ for pkg in "${ORDERED_PKGS[@]}"; do
 
     if "${install_script}"; then
         log_success "${pkg} installed successfully."
+        SUCCEEDED_PKGS+=("${pkg}")
     else
         log_error "Failed to install ${pkg}."
-        exit 1
+        FAILED_PKGS+=("${pkg}")
+        if [[ -z "${KEEP_GOING}" ]]; then
+            exit 1
+        fi
     fi
 done
 
+echo ""
+log_info "=== Installation Summary ==="
+log_success "Succeeded (${#SUCCEEDED_PKGS[@]}): ${SUCCEEDED_PKGS[*]:-none}"
+if [[ ${#FAILED_PKGS[@]} -gt 0 ]]; then
+    log_error "Failed (${#FAILED_PKGS[@]}): ${FAILED_PKGS[*]}"
+    exit 1
+fi
 log_success "All requested packages processed."

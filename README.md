@@ -79,6 +79,22 @@ bin/install.sh --dry-run
 bin/install.sh --dry-run samtools bcftools
 ```
 
+### Health Check (Doctor)
+
+```bash
+make doctor
+```
+
+Checks disk usage of `MJSTP_PREFIX`/`MJSTP_CACHE_DIR`/`MJSTP_DATA_DIR`, broken symlinks in `~/local/bin`, shared library links (`ldd`), and key tool versions.
+
+### Continue on Error
+
+```bash
+make update KEEP_GOING=1
+# Or directly
+bin/install.sh --keep-going
+```
+
 ### Log Output to File
 
 ```bash
@@ -106,6 +122,7 @@ Output is logged to `~/.mjstp_install.log`.
   - `condax-pkgs` ([packages.txt](src/pkgs/condax-pkgs/packages.txt)): `openjdk`, `nextflow`, `sra-tools`, `gdc-client`, `awscli`, `lftp`, `enabrowsertools`, `bedtools`, `bedops`, `seqkit`, `seqtk`, `pigz`, `mosdepth`, `fastp`, `fastqc`, `bwa-mem2`, `gffread`, `ucsc-bedgraphtobigwig`, `yq`, `jq`
   - `cargo-pkgs` ([packages.txt](src/pkgs/cargo-pkgs/packages.txt)): `ripgrep`, `fd-find`
   - `pipx-pkgs` ([packages.txt](src/pkgs/pipx-pkgs/packages.txt)): `multiqc`, `marimo`, `ruff`
+  - `r-pkgs` ([packages.txt](src/pkgs/r-pkgs/packages.txt)): `languageserver`, `lintr`, `data.table`, `BiocManager`
 - **Languages**: `go`, `rust`, `r`
 - **Editors**: `neovim`, `lazyvim`
 - **Shell & CLI Tools**: `tmux`, `starship`, `duf`, `dust`, `lsd`, `zoxide`, `fzf`, `git`, `csvkit`, `apptainer`

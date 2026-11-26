@@ -23,5 +23,5 @@ if [ -x "${TARGET_BIN}" ] && [ -d "${MJSTP_PREFIX}/opt/condax/git" ]; then
 fi
 
 log_info "Installing Git via Condax..."
-"${CONDAX_BIN}" install --force -c conda-forge git
+"${CONDAX_BIN}" install --link-conflict overwrite -c conda-forge git
 log_success "Git installed to ${TARGET_BIN}."

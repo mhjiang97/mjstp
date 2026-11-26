@@ -16,5 +16,5 @@ if [ ! -x "${CARGO_BIN}" ]; then
 fi
 
 log_info "Ensuring lsd is at the latest version in ${MJSTP_PREFIX}/bin..."
-"${CARGO_BIN}" install lsd --locked --root "${MJSTP_PREFIX}"
+"${CARGO_BIN}" install lsd --locked --force --root "${MJSTP_PREFIX}"
 log_success "lsd is at the latest version in ${TARGET_BIN}."

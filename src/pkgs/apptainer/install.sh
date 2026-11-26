@@ -23,5 +23,5 @@ if [ -x "${TARGET_BIN}" ] && [ -d "${MJSTP_PREFIX}/opt/condax/apptainer" ]; then
 fi
 
 log_info "Installing Apptainer via Condax..."
-"${CONDAX_BIN}" install --force -c conda-forge apptainer
+"${CONDAX_BIN}" install --link-conflict overwrite -c conda-forge apptainer
 log_success "Apptainer installed to ${TARGET_BIN}."

@@ -9,6 +9,8 @@ NC='\033[0m' # No Color
 
 # Root-like user prefix (no sudo required)
 export MJSTP_PREFIX="${MJSTP_PREFIX:-${HOME}/local}"
+export MJSTP_CACHE_DIR="${MJSTP_CACHE_DIR:-${MJSTP_PREFIX}/var/cache}"
+export MJSTP_DATA_DIR="${MJSTP_DATA_DIR:-${MJSTP_PREFIX}/var/data}"
 
 # Logging
 log_info() {
@@ -44,7 +46,9 @@ init_local_env() {
         "${p}/include" \
         "${p}/share/man/man1" \
         "${p}/etc" \
-        "${p}/opt"
+        "${p}/opt" \
+        "${MJSTP_CACHE_DIR}" \
+        "${MJSTP_DATA_DIR}"
 
     export MAMBA_ROOT_PREFIX="${p}/opt/micromamba"
     export CONDAXRC="${p}/etc/condaxrc"
@@ -56,11 +60,19 @@ init_local_env() {
     export CARGO_HOME="${p}/opt/cargo"
     export RUSTUP_HOME="${p}/opt/rustup"
 
+    # HPC-friendly cache & data directories (override MJSTP_CACHE_DIR / MJSTP_DATA_DIR to keep $HOME quota small)
+    export APPTAINER_CACHEDIR="${MJSTP_CACHE_DIR}/apptainer"
+    export NXF_SINGULARITY_CACHEDIR="${MJSTP_CACHE_DIR}/singularity"
+    export CONDA_PKGS_DIRS="${MJSTP_CACHE_DIR}/conda/pkgs"
+    export UV_CACHE_DIR="${MJSTP_CACHE_DIR}/uv"
+    export PIP_CACHE_DIR="${MJSTP_CACHE_DIR}/pip"
+    export NXF_HOME="${MJSTP_DATA_DIR}/nextflow"
+
     export PATH="${p}/bin:${p}/opt/go/bin:${p}/opt/cargo/bin:${p}/opt/micromamba/bin:${PATH}"
     export MANPATH="${p}/share/man:${MANPATH:-}"
     export CPPFLAGS="-I${p}/include -I${p}/include/ncursesw"
     export CFLAGS="-O2 -I${p}/include -I${p}/include/ncursesw"
-    export LDFLAGS="-L${p}/lib64 -L${p}/lib -Wl,-rpath,${p}/lib64 -Wl,-rpath,${p}/lib"
+    export LDFLAGS="-L${p}/lib64 -L${p}/lib -Wl,-rpath,${p}/lib64 -Wl,-rpath,${p}/lib -Wl,-rpath-link,${p}/lib64 -Wl,-rpath-link,${p}/lib"
     export PKG_CONFIG_PATH="${p}/lib/pkgconfig:${p}/lib64/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
 }
 
@@ -117,7 +129,7 @@ check_system() {
                 required+=("$pkg")
             fi
             case "$pkg" in
-                zlib|bzip2|xz|ncurses|htslib|samtools|bcftools|dust|lsd|starship)
+                zlib|bzip2|xz|ncurses|htslib|samtools|bcftools|dust|lsd|starship|cargo-pkgs)
                     needs_c_toolchain=1
                     ;;
             esac

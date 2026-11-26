@@ -102,6 +102,10 @@ Output is logged to `~/.mjstp_install.log`.
 ## Packages
 
 - **Environment & Package Managers**: `micromamba`, `condax`, `pipx`, `uv`
+- **Bulk Manifests**:
+  - `condax-pkgs` ([packages.txt](src/pkgs/condax-pkgs/packages.txt)): `openjdk`, `nextflow`, `sra-tools`, `gdc-client`, `awscli`, `lftp`, `enabrowsertools`, `bedtools`, `bedops`, `seqkit`, `seqtk`, `pigz`, `mosdepth`, `fastp`, `fastqc`, `bwa-mem2`, `gffread`, `ucsc-bedgraphtobigwig`, `yq`, `jq`
+  - `cargo-pkgs` ([packages.txt](src/pkgs/cargo-pkgs/packages.txt)): `ripgrep`, `fd-find`
+  - `pipx-pkgs` ([packages.txt](src/pkgs/pipx-pkgs/packages.txt)): `multiqc`, `marimo`, `ruff`
 - **Languages**: `go`, `rust`, `r`
 - **Editors**: `neovim`, `lazyvim`
 - **Shell & CLI Tools**: `tmux`, `starship`, `duf`, `dust`, `lsd`, `zoxide`, `fzf`, `git`, `csvkit`, `apptainer`
@@ -109,3 +113,9 @@ Output is logged to `~/.mjstp_install.log`.
 - **Bioinformatics**: `htslib`, `samtools`, `bcftools`, `snakemake`
 - **R Tools**: `radian`
 - **macOS Only**: `sshfwd` (persistent SSH port forwards via `launchd` + `autossh`; skipped on Linux)
+
+## HPC Cache & Data Directories
+
+To keep `$HOME` quota usage small on HPC servers, override `MJSTP_CACHE_DIR` and `MJSTP_DATA_DIR` (defaults: `${MJSTP_PREFIX}/var/cache` and `${MJSTP_PREFIX}/var/data`). `mjstp` exports:
+- `APPTAINER_CACHEDIR`, `NXF_SINGULARITY_CACHEDIR`, `CONDA_PKGS_DIRS`, `UV_CACHE_DIR`, `PIP_CACHE_DIR` under `${MJSTP_CACHE_DIR}`
+- `NXF_HOME` under `${MJSTP_DATA_DIR}`

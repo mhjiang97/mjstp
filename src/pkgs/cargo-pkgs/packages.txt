@@ -1,0 +1,5 @@
+# Cargo bulk crate manifest
+# Format: <crate_name>
+
+ripgrep
+fd-find

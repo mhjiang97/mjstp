@@ -1,0 +1,6 @@
+# Pipx bulk package manifest
+# Format: <package_name>
+
+multiqc
+marimo
+ruff

@@ -38,7 +38,7 @@ tar xjf "${TARBALL}"
 cd "samtools-${VERSION}" || exit 1
 
 log_info "Configuring and building..."
-./configure --prefix="${INSTALL_DIR}" --with-htslib="${INSTALL_DIR}"
+./configure --prefix="${INSTALL_DIR}" --with-htslib=system
 make -j"$(cpu_jobs)"
 make install
 

@@ -23,5 +23,5 @@ if [ -x "${TARGET_BIN}" ] && [ -d "${MJSTP_PREFIX}/opt/condax/tmux" ]; then
 fi
 
 log_info "Installing Tmux via Condax..."
-"${CONDAX_BIN}" install --force -c conda-forge tmux
+"${CONDAX_BIN}" install --link-conflict overwrite -c conda-forge tmux
 log_success "Tmux installed to ${TARGET_BIN}."

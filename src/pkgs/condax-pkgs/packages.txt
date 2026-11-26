@@ -1,0 +1,31 @@
+# Condax bulk package manifest
+# Format: <package> [channel1,channel2,...]
+# Default channels if omitted: conda-forge
+
+# Workflow & runtime
+openjdk conda-forge
+nextflow bioconda,conda-forge
+
+# Data transfer & repositories
+sra-tools bioconda,conda-forge
+gdc-client bioconda,conda-forge
+awscli conda-forge
+lftp conda-forge
+enabrowsertools bioconda,conda-forge
+
+# Genomics & sequence processing
+bedtools bioconda,conda-forge
+bedops bioconda,conda-forge
+seqkit bioconda,conda-forge
+seqtk bioconda,conda-forge
+pigz conda-forge
+mosdepth bioconda,conda-forge
+fastp bioconda,conda-forge
+fastqc bioconda,conda-forge
+bwa-mem2 bioconda,conda-forge
+gffread bioconda,conda-forge
+ucsc-bedgraphtobigwig bioconda,conda-forge
+
+# Structured data CLI
+yq conda-forge
+jq conda-forge

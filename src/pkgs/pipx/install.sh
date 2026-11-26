@@ -39,7 +39,7 @@ if [ -x "${PIPX_BIN}" ] && [ -d "${MJSTP_PREFIX}/opt/condax/pipx" ]; then
 fi
 
 log_info "Installing Pipx via Condax..."
-"${CONDAX_BIN}" install --force -c conda-forge pipx
+"${CONDAX_BIN}" install --link-conflict overwrite -c conda-forge pipx
 
 if [ ! -x "${PIPX_BIN}" ]; then
     log_error "Pipx installed via condax but not found at ${PIPX_BIN}."

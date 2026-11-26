@@ -23,5 +23,5 @@ if [ -x "${TARGET_BIN}" ] && [ -d "${MJSTP_PREFIX}/opt/condax/r-base" ]; then
 fi
 
 log_info "Installing R Base via Condax..."
-"${CONDAX_BIN}" install --force -c conda-forge r-base
+"${CONDAX_BIN}" install --link-conflict overwrite -c conda-forge r-base
 log_success "R Base installed to ${TARGET_BIN}."

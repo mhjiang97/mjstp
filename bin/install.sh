@@ -264,11 +264,13 @@ ensure_profile_line() {
 # shellcheck disable=SC2016
 {
     ensure_profile_line 'export MJSTP_PREFIX=' 'export MJSTP_PREFIX="${MJSTP_PREFIX:-${HOME}/local}"'
+    ensure_profile_line 'export MJSTP_CACHE_DIR=' 'export MJSTP_CACHE_DIR="${MJSTP_CACHE_DIR:-${MJSTP_PREFIX}/var/cache}"'
+    ensure_profile_line 'export MJSTP_DATA_DIR=' 'export MJSTP_DATA_DIR="${MJSTP_DATA_DIR:-${MJSTP_PREFIX}/var/data}"'
     ensure_profile_line 'MJSTP_PREFIX}/bin' 'export PATH="${MJSTP_PREFIX}/bin:${MJSTP_PREFIX}/opt/go/bin:${MJSTP_PREFIX}/opt/cargo/bin:${PATH}"'
     ensure_profile_line 'export MANPATH=' 'export MANPATH="${MJSTP_PREFIX}/share/man:${MANPATH:-}"'
     ensure_profile_line 'export CPPFLAGS=' 'export CPPFLAGS="-I${MJSTP_PREFIX}/include -I${MJSTP_PREFIX}/include/ncursesw"'
     ensure_profile_line 'export CFLAGS=' 'export CFLAGS="-O2 -I${MJSTP_PREFIX}/include -I${MJSTP_PREFIX}/include/ncursesw"'
-    ensure_profile_line 'export LDFLAGS=' 'export LDFLAGS="-L${MJSTP_PREFIX}/lib64 -L${MJSTP_PREFIX}/lib -Wl,-rpath,${MJSTP_PREFIX}/lib64 -Wl,-rpath,${MJSTP_PREFIX}/lib"'
+    ensure_profile_line 'export LDFLAGS=' 'export LDFLAGS="-L${MJSTP_PREFIX}/lib64 -L${MJSTP_PREFIX}/lib -Wl,-rpath,${MJSTP_PREFIX}/lib64 -Wl,-rpath,${MJSTP_PREFIX}/lib -Wl,-rpath-link,${MJSTP_PREFIX}/lib64 -Wl,-rpath-link,${MJSTP_PREFIX}/lib"'
     ensure_profile_line 'export PKG_CONFIG_PATH=' 'export PKG_CONFIG_PATH="${MJSTP_PREFIX}/lib/pkgconfig:${MJSTP_PREFIX}/lib64/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"'
     ensure_profile_line 'export MAMBA_ROOT_PREFIX=' 'export MAMBA_ROOT_PREFIX="${MJSTP_PREFIX}/opt/micromamba"'
     ensure_profile_line 'export CONDAXRC=' 'export CONDAXRC="${MJSTP_PREFIX}/etc/condaxrc"'
@@ -279,6 +281,12 @@ ensure_profile_line() {
     ensure_profile_line 'export GOBIN=' 'export GOBIN="${MJSTP_PREFIX}/bin"'
     ensure_profile_line 'export CARGO_HOME=' 'export CARGO_HOME="${MJSTP_PREFIX}/opt/cargo"'
     ensure_profile_line 'export RUSTUP_HOME=' 'export RUSTUP_HOME="${MJSTP_PREFIX}/opt/rustup"'
+    ensure_profile_line 'export APPTAINER_CACHEDIR=' 'export APPTAINER_CACHEDIR="${MJSTP_CACHE_DIR}/apptainer"'
+    ensure_profile_line 'export NXF_SINGULARITY_CACHEDIR=' 'export NXF_SINGULARITY_CACHEDIR="${MJSTP_CACHE_DIR}/singularity"'
+    ensure_profile_line 'export CONDA_PKGS_DIRS=' 'export CONDA_PKGS_DIRS="${MJSTP_CACHE_DIR}/conda/pkgs"'
+    ensure_profile_line 'export UV_CACHE_DIR=' 'export UV_CACHE_DIR="${MJSTP_CACHE_DIR}/uv"'
+    ensure_profile_line 'export PIP_CACHE_DIR=' 'export PIP_CACHE_DIR="${MJSTP_CACHE_DIR}/pip"'
+    ensure_profile_line 'export NXF_HOME=' 'export NXF_HOME="${MJSTP_DATA_DIR}/nextflow"'
 }
 
 # Ensure ~/.bashrc exists on minimal Linux servers and source ~/.mjstp_profile

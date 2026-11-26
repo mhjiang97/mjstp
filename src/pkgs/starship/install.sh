@@ -32,6 +32,6 @@ if [ ! -x "${CARGO_BIN}" ]; then
 fi
 
 log_info "Ensuring Starship is at the latest version in ${MJSTP_PREFIX}/bin..."
-"${CARGO_BIN}" install starship --locked --root "${MJSTP_PREFIX}"
+"${CARGO_BIN}" install starship --locked --force --root "${MJSTP_PREFIX}"
 ensure_starship_profile
 log_success "Starship is at the latest version in ${TARGET_BIN}."
